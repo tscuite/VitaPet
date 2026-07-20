@@ -47,6 +47,12 @@ public final class ChatWindowController: NSWindowController {
     private var webhookPort: @MainActor () -> Int = { 19280 }
     private var webhookSecret: @MainActor () -> String = { "" }
     private var onSaveNotificationConfig: @MainActor (String, Bool, Int, String) -> Void = { _, _, _, _ in }
+    private var chatWindowTranslucencyEnabled: @MainActor () -> Bool = { false }
+    private var chatWindowOpacity: @MainActor () -> Double = { 1.0 }
+    private var onSaveChatAppearance: @MainActor (Bool, Double) -> Void = { _, _ in }
+    private var storageSummary: @MainActor () -> String = { "存储信息不可用" }
+    private var onRefreshStorage: @MainActor () async -> String = { "已刷新" }
+    private var onMaintainStorage: @MainActor () async -> String = { "维护不可用" }
     private var petProfiles: @MainActor () -> [PetProfileItem] = { [] }
     private var onUpdatePet: @MainActor (UUID, String, String, Double, String, String, String, String) -> Void = { _, _, _, _, _, _, _, _ in }
     private var onUpdatePetSound: @MainActor (UUID, Bool?, Float?) -> Void = { _, _, _ in }
@@ -139,8 +145,16 @@ public final class ChatWindowController: NSWindowController {
         window?.styleMask.remove(.fullSizeContentView)
 
         window?.contentView = NSHostingView(
-            rootView: TabbedChatView(viewModel: chatViewModel, availablePets: listAvailablePets())
+            rootView: TabbedChatView(
+                viewModel: chatViewModel,
+                availablePets: listAvailablePets(),
+                chatAppearance: currentChatAppearanceSettings(),
+                onSaveChatAppearance: { [weak self] enabled, opacity in
+                    self?.saveAndApplyChatAppearance(enabled: enabled, opacity: opacity)
+                }
+            )
         )
+        applyChatWindowAppearance()
         if let window, window.frame.width < 760 {
             window.setContentSize(NSSize(width: 860, height: 640))
             window.center()
@@ -225,9 +239,18 @@ public final class ChatWindowController: NSWindowController {
                 onReloadPlugins: onReloadPlugins,
                 onResetLanguage: onResetLanguage,
                 onResetAttributes: onResetAttributes,
-                onResetAll: onResetAll
+                onResetAll: onResetAll,
+                chatWindowTranslucencyEnabled: chatWindowTranslucencyEnabled(),
+                chatWindowOpacity: chatWindowOpacity(),
+                onSaveChatAppearance: { [weak self] enabled, opacity in
+                    self?.saveAndApplyChatAppearance(enabled: enabled, opacity: opacity)
+                },
+                storageSummary: storageSummary,
+                onRefreshStorage: onRefreshStorage,
+                onMaintainStorage: onMaintainStorage
             )
         )
+        applyChatWindowAppearance()
         window?.level = .floating
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
@@ -248,6 +271,7 @@ public final class ChatWindowController: NSWindowController {
                 }
             )
         )
+        applyChatWindowAppearance()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
     }
@@ -255,6 +279,7 @@ public final class ChatWindowController: NSWindowController {
     public func showActivityLog() {
         window?.title = "VitaPet Activity Log"
         window?.contentView = NSHostingView(rootView: ActivityLogView(activityLogViewModel: activityLogViewModel))
+        applyChatWindowAppearance()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
     }
@@ -262,6 +287,7 @@ public final class ChatWindowController: NSWindowController {
     public func showStatistics() {
         window?.title = "VitaPet Statistics"
         window?.contentView = NSHostingView(rootView: StatisticsView(statisticsViewModel: statisticsViewModel))
+        applyChatWindowAppearance()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
     }
@@ -374,6 +400,27 @@ public final class ChatWindowController: NSWindowController {
         self.webhookPort = webhookPort
         self.webhookSecret = webhookSecret
         self.onSaveNotificationConfig = onSaveNotificationConfig
+    }
+
+    public func configureChatAppearance(
+        translucencyEnabled: @escaping @MainActor () -> Bool,
+        opacity: @escaping @MainActor () -> Double,
+        onSave: @escaping @MainActor (Bool, Double) -> Void
+    ) {
+        self.chatWindowTranslucencyEnabled = translucencyEnabled
+        self.chatWindowOpacity = opacity
+        self.onSaveChatAppearance = onSave
+        applyChatWindowAppearance()
+    }
+
+    public func configureStorageManagement(
+        summary: @escaping @MainActor () -> String,
+        onRefresh: @escaping @MainActor () async -> String,
+        onMaintain: @escaping @MainActor () async -> String
+    ) {
+        storageSummary = summary
+        onRefreshStorage = onRefresh
+        onMaintainStorage = onMaintain
     }
 
     public func configurePetManagement(
@@ -514,5 +561,49 @@ public final class ChatWindowController: NSWindowController {
         self.onRevealPluginInFinder = onRevealPluginInFinder
         self.onReloadPlugins = onReloadPlugins
         self.onCreatePlugin = onCreatePlugin
+    }
+
+    private func currentChatAppearanceSettings() -> ChatAppearanceSettings {
+        ChatAppearanceSettings(
+            translucencyEnabled: chatWindowTranslucencyEnabled(),
+            opacity: chatWindowOpacity()
+        )
+    }
+
+    private func saveAndApplyChatAppearance(enabled: Bool, opacity: Double) {
+        let settings = ChatAppearanceSettings(
+            translucencyEnabled: enabled,
+            opacity: opacity
+        )
+        onSaveChatAppearance(settings.translucencyEnabled, settings.opacity)
+        applyChatWindowAppearance(
+            enabled: settings.translucencyEnabled,
+            opacity: settings.opacity
+        )
+    }
+
+    private func applyChatWindowAppearance() {
+        let settings = currentChatAppearanceSettings()
+        applyChatWindowAppearance(enabled: settings.translucencyEnabled, opacity: settings.opacity)
+    }
+
+    private func applyChatWindowAppearance(enabled: Bool, opacity: Double) {
+        guard let window else {
+            return
+        }
+
+        if enabled {
+            window.alphaValue = Self.normalizedChatWindowOpacity(opacity)
+            window.isOpaque = false
+            window.backgroundColor = .clear
+        } else {
+            window.alphaValue = 1.0
+            window.isOpaque = true
+            window.backgroundColor = .windowBackgroundColor
+        }
+    }
+
+    private static func normalizedChatWindowOpacity(_ value: Double) -> Double {
+        ChatAppearanceSettings.normalizedOpacity(value)
     }
 }

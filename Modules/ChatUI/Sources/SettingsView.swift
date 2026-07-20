@@ -204,30 +204,13 @@ enum MCPSettingsSummary {
     }
 }
 
-private enum SettingsScope: String, CaseIterable, Identifiable {
-    case all
-    case pet
-    case sprite
-    case awareness
-    case ai
-    case notifications
-    case plugins
-    case capability
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .all: return "全部"
-        case .pet: return "宠物"
-        case .sprite: return "外观"
-        case .awareness: return "感知"
-        case .ai: return "AI"
-        case .notifications: return "通知"
-        case .plugins: return "插件"
-        case .capability: return "能力"
-        }
-    }
+private struct SettingsSearchResults {
+    let visibleSections: Set<SettingsSectionID>
+    let petIndices: [Int]
+    let spritePackIndices: [Int]
+    let desktopRuleIndices: [Int]
+    let pluginIndices: [Int]
+    let capabilityIndices: [Int]
 }
 
 @MainActor
@@ -284,6 +267,8 @@ public struct SettingsView: View {
     @State private var webhookEnabled: Bool
     @State private var webhookPort: Int
     @State private var webhookSecret: String
+    @State private var chatWindowTranslucencyEnabled: Bool
+    @State private var chatWindowOpacity: Double
     @State private var errorMessage: String?
     @State private var showError: Bool
     @State private var showDeleteConfirm: Bool
@@ -305,7 +290,7 @@ public struct SettingsView: View {
     @State private var editingPluginID: String?
     @State private var showPluginDeleteConfirm = false
     @State private var pendingPluginDeleteID: String?
-    @State private var settingsScope: SettingsScope = .all
+    @State private var settingsScope: SettingsScope = .initial
     @State private var settingsSearchText: String = ""
     @State private var pendingAIConfigSaveTask: Task<Void, Never>?
     @State private var pendingAIMemorySaveTask: Task<Void, Never>?
@@ -328,6 +313,10 @@ public struct SettingsView: View {
     private let onSaveAIConfig: @MainActor (String, String, String, AIEngine.AIBackend, String, String) -> Void
     private let onSaveAIMemoryConfig: @MainActor (Bool, String, String, String, String, String, String, Int) -> Void
     private let onSaveNotificationConfig: @MainActor (String, Bool, Int, String) -> Void
+    private let onSaveChatAppearance: @MainActor (Bool, Double) -> Void
+    private let storageSummary: @MainActor () -> String
+    private let onRefreshStorage: @MainActor () async -> String
+    private let onMaintainStorage: @MainActor () async -> String
     private let onUpdatePet: @MainActor (UUID, String, String, Double, String, String, String, String) -> Void
     private let onUpdatePetSound: @MainActor (UUID, Bool?, Float?) -> Void
     private let onUpdatePetLanguage: @MainActor (UUID, [String: [String]]?) -> String?
@@ -414,7 +403,13 @@ public struct SettingsView: View {
         onReloadPlugins: @escaping @MainActor () async -> String? = { nil },
         onResetLanguage: (@MainActor (UUID) -> Void)? = nil,
         onResetAttributes: (@MainActor (UUID) -> Void)? = nil,
-        onResetAll: (@MainActor (UUID) -> Void)? = nil
+        onResetAll: (@MainActor (UUID) -> Void)? = nil,
+        chatWindowTranslucencyEnabled: Bool = false,
+        chatWindowOpacity: Double = 1.0,
+        onSaveChatAppearance: @escaping @MainActor (Bool, Double) -> Void = { _, _ in }
+        , storageSummary: @escaping @MainActor () -> String = { "存储信息不可用" }
+        , onRefreshStorage: @escaping @MainActor () async -> String = { "已刷新" }
+        , onMaintainStorage: @escaping @MainActor () async -> String = { "维护不可用" }
     ) {
         _capabilityItems = State(initialValue: Self.defaultCapabilityItems)
         _pluginSettingsViewModel = State(initialValue: pluginSettingsViewModel)
@@ -445,6 +440,8 @@ public struct SettingsView: View {
         _webhookEnabled = State(initialValue: webhookEnabled)
         _webhookPort = State(initialValue: webhookPort)
         _webhookSecret = State(initialValue: webhookSecret)
+        _chatWindowTranslucencyEnabled = State(initialValue: chatWindowTranslucencyEnabled)
+        _chatWindowOpacity = State(initialValue: Self.normalizedChatWindowOpacity(chatWindowOpacity))
         _errorMessage = State(initialValue: nil)
         _showError = State(initialValue: false)
         _showDeleteConfirm = State(initialValue: false)
@@ -480,6 +477,10 @@ public struct SettingsView: View {
         self.onSaveAIConfig = onSaveAIConfig
         self.onSaveAIMemoryConfig = onSaveAIMemoryConfig
         self.onSaveNotificationConfig = onSaveNotificationConfig
+        self.onSaveChatAppearance = onSaveChatAppearance
+        self.storageSummary = storageSummary
+        self.onRefreshStorage = onRefreshStorage
+        self.onMaintainStorage = onMaintainStorage
         self.onUpdatePet = onUpdatePet
         self.onUpdatePetSound = onUpdatePetSound
         self.onUpdatePetLanguage = onUpdatePetLanguage
@@ -508,7 +509,14 @@ public struct SettingsView: View {
     }
 
     private var settingsList: some View {
-        List {
+        let searchResults = settingsSearchResults
+
+        return List {
+            StorageManagementSection(
+                summary: storageSummary(),
+                onRefresh: onRefreshStorage,
+                onMaintain: onMaintainStorage
+            )
             Section("显示范围") {
                 Picker("模块", selection: $settingsScope) {
                     ForEach(SettingsScope.allCases) { scope in
@@ -519,11 +527,8 @@ public struct SettingsView: View {
             }
 
             // ─── 宠物核心 ───
-            if shouldShowSection(.pet) {
-                let visiblePets = petProfiles.filter { pet in
-                    editingPetID == pet.id
-                        || matchesSearchText(pet.name, spritePackName(for: pet.spritePack), pet.personality, pet.hobbies)
-                }
+            if searchResults.visibleSections.contains(.petManagement) {
+                let visiblePets = searchResults.petIndices.map { petProfiles[$0] }
 
                 Section(L10n.settingsPetManagement) {
                     if visiblePets.isEmpty {
@@ -820,10 +825,8 @@ public struct SettingsView: View {
                 }
             }
 
-            if shouldShowSection(.sprite) {
-                let visibleSpritePackItems = spritePackItems.filter { item in
-                    matchesSearchText(item.name, item.id)
-                }
+            if searchResults.visibleSections.contains(.spritePacks) {
+                let visibleSpritePackItems = searchResults.spritePackIndices.map { spritePackItems[$0] }
 
                 Section(L10n.settingsSpritePacks) {
                     if visibleSpritePackItems.isEmpty {
@@ -860,8 +863,49 @@ public struct SettingsView: View {
                 }
             }
 
+            if searchResults.visibleSections.contains(.chatAppearance) {
+                Section("聊天窗口") {
+                    Toggle(isOn: $chatWindowTranslucencyEnabled) {
+                        Label("半透明", systemImage: "rectangle.on.rectangle")
+                    }
+                    .onChange(of: chatWindowTranslucencyEnabled) { _, newValue in
+                        saveChatAppearance(enabled: newValue, opacity: chatWindowOpacity)
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Label("透明度", systemImage: "circle.lefthalf.filled")
+                            Spacer()
+                            Text("\(Int((chatWindowOpacity * 100).rounded()))%")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Slider(
+                            value: $chatWindowOpacity,
+                            in: ChatAppearanceSettings.minimumOpacity...ChatAppearanceSettings.maximumOpacity,
+                            step: 0.05
+                        )
+                            .disabled(!chatWindowTranslucencyEnabled)
+                            .onChange(of: chatWindowOpacity) { _, newValue in
+                                let resolvedOpacity = Self.normalizedChatWindowOpacity(newValue)
+                                if resolvedOpacity != newValue {
+                                    chatWindowOpacity = resolvedOpacity
+                                }
+                                saveChatAppearance(
+                                    enabled: chatWindowTranslucencyEnabled,
+                                    opacity: resolvedOpacity
+                                )
+                            }
+                    }
+                    .opacity(chatWindowTranslucencyEnabled ? 1 : 0.55)
+                }
+            }
+
             // ─── 环境感知 ───
-            if shouldShowSection(.awareness) {
+            if searchResults.visibleSections.contains(.desktopAwareness) {
+                let visibleDesktopRuleIndices = searchResults.desktopRuleIndices
+
                 Section("桌面感知") {
                 Toggle("启用桌面感知", isOn: $desktopAwarenessEnabled)
                     .onChange(of: desktopAwarenessEnabled) { _, newValue in
@@ -872,13 +916,13 @@ public struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                if desktopAwarenessRules.isEmpty {
+                if visibleDesktopRuleIndices.isEmpty {
                     Text("暂无规则")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 4)
                 } else {
-                    ForEach(Array(desktopAwarenessRules.indices), id: \.self) { index in
+                    ForEach(visibleDesktopRuleIndices, id: \.self) { index in
                         let ruleID = desktopAwarenessRules[index].id
                         DesktopAwarenessRuleEditor(
                             rule: $desktopAwarenessRules[index],
@@ -924,7 +968,7 @@ public struct SettingsView: View {
             }
             }
 
-            if shouldShowSection(.awareness) {
+            if searchResults.visibleSections.contains(.weatherAwareness) {
                 Section("天气感知") {
                 Toggle("启用天气感知", isOn: $weatherAwarenessEnabled)
                     .onChange(of: weatherAwarenessEnabled) { _, newValue in
@@ -995,7 +1039,7 @@ public struct SettingsView: View {
             }
             }
 
-            if shouldShowSection(.awareness) {
+            if searchResults.visibleSections.contains(.sound) {
                 Section("音效") {
                 Toggle("启用音效", isOn: $soundEnabled)
                     .onChange(of: soundEnabled) { _, newValue in
@@ -1019,7 +1063,7 @@ public struct SettingsView: View {
             }
 
             // ─── AI & 通信 ───
-            if shouldShowSection(.ai) {
+            if searchResults.visibleSections.contains(.aiConfiguration) {
                 Section {
                     HStack(spacing: 10) {
                         Circle()
@@ -1115,7 +1159,7 @@ public struct SettingsView: View {
                 }
             }
 
-            if shouldShowSection(.ai) {
+            if searchResults.visibleSections.contains(.remoteMemory) {
                 Section {
                     Toggle("启用远程记忆", isOn: $memoryWorkerEnabled)
                         .onChange(of: memoryWorkerEnabled) { _, _ in
@@ -1266,7 +1310,7 @@ public struct SettingsView: View {
                 }
             }
 
-            if shouldShowSection(.notifications) {
+            if searchResults.visibleSections.contains(.notifications) {
                 Section(L10n.settingsNotifications) {
                 Text(L10n.settingsNotificationsGithub)
                     .font(.headline)
@@ -1315,10 +1359,8 @@ public struct SettingsView: View {
             }
 
             // ─── 扩展 ───
-            if shouldShowSection(.plugins) {
-                let visiblePlugins = pluginSettingsViewModel.plugins.filter { plugin in
-                    matchesSearchText(plugin.name, plugin.description, plugin.id)
-                }
+            if searchResults.visibleSections.contains(.plugins) {
+                let visiblePlugins = searchResults.pluginIndices.map { pluginSettingsViewModel.plugins[$0] }
 
                 Section(L10n.settingsPlugins) {
                 HStack {
@@ -1435,11 +1477,8 @@ public struct SettingsView: View {
             }
             }
 
-            if shouldShowSection(.capability) {
-                let visibleCapabilityIndices = capabilityItems.indices.filter { index in
-                    let item = capabilityItems[index]
-                    return matchesSearchText(item.name, item.description)
-                }
+            if searchResults.visibleSections.contains(.capabilities) {
+                let visibleCapabilityIndices = searchResults.capabilityIndices
 
                 Section(L10n.settingsCapabilities) {
                     if visibleCapabilityIndices.isEmpty {
@@ -1709,6 +1748,92 @@ public struct SettingsView: View {
         settingsSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var settingsSearchResults: SettingsSearchResults {
+        let query = settingsSearchText
+        let petIndices = SettingsSearchMatcher.matchingIndices(
+            in: petProfiles,
+            query: query,
+            parent: .petManagement,
+            searchableFields: { pet in
+                [
+                    pet.name,
+                    pet.spritePack,
+                    spritePackName(for: pet.spritePack),
+                    pet.gender,
+                    pet.age,
+                    pet.personality,
+                    pet.hobbies,
+                ]
+            },
+            preserve: { $0.id == editingPetID }
+        )
+        let spritePackIndices = SettingsSearchMatcher.matchingIndices(
+            in: spritePackItems,
+            query: query,
+            parent: .spritePacks,
+            searchableFields: { item in
+                [item.name, item.id, item.directory.lastPathComponent]
+            }
+        )
+        let desktopRuleIndices = SettingsSearchMatcher.matchingIndices(
+            in: desktopAwarenessRules,
+            query: query,
+            parent: .desktopAwareness,
+            searchableFields: { rule in
+                [rule.category, rule.animation]
+                    + rule.bundleIdPatterns
+                    + rule.bubbleTexts
+            }
+        )
+        let plugins = pluginSettingsViewModel.plugins
+        let pluginIndices = SettingsSearchMatcher.matchingIndices(
+            in: plugins,
+            query: query,
+            parent: .plugins,
+            searchableFields: { plugin in
+                [plugin.name, plugin.id, plugin.version, plugin.description]
+            }
+        )
+        let capabilityIndices = SettingsSearchMatcher.matchingIndices(
+            in: capabilityItems,
+            query: query,
+            parent: .capabilities,
+            searchableFields: { item in
+                [item.name, item.id, item.description]
+            }
+        )
+
+        var dynamicMatches: Set<SettingsSectionID> = []
+        if !petIndices.isEmpty {
+            dynamicMatches.insert(.petManagement)
+        }
+        if !spritePackIndices.isEmpty {
+            dynamicMatches.insert(.spritePacks)
+        }
+        if !desktopRuleIndices.isEmpty {
+            dynamicMatches.insert(.desktopAwareness)
+        }
+        if !pluginIndices.isEmpty {
+            dynamicMatches.insert(.plugins)
+        }
+        if !capabilityIndices.isEmpty {
+            dynamicMatches.insert(.capabilities)
+        }
+
+        return SettingsSearchResults(
+            visibleSections: SettingsSearchMatcher.visibleSections(
+                selectedScope: settingsScope,
+                query: query,
+                dynamicMatches: dynamicMatches
+            ),
+            petIndices: petIndices,
+            spritePackIndices: spritePackIndices,
+            desktopRuleIndices: desktopRuleIndices,
+            pluginIndices: pluginIndices,
+            capabilityIndices: capabilityIndices
+        )
+    }
+
     private func settingsEditorButton(
         status: String,
         description: String,
@@ -1746,16 +1871,12 @@ public struct SettingsView: View {
         .buttonStyle(.plain)
     }
 
-    private func shouldShowSection(_ section: SettingsScope) -> Bool {
-        settingsScope == .all || settingsScope == section
+    private func saveChatAppearance(enabled: Bool, opacity: Double) {
+        onSaveChatAppearance(enabled, Self.normalizedChatWindowOpacity(opacity))
     }
 
-    private func matchesSearchText(_ fields: String...) -> Bool {
-        let keyword = searchKeyword
-        guard !keyword.isEmpty else {
-            return true
-        }
-        return fields.contains { $0.localizedCaseInsensitiveContains(keyword) }
+    private static func normalizedChatWindowOpacity(_ value: Double) -> Double {
+        ChatAppearanceSettings.normalizedOpacity(value)
     }
 
     private func statusColor(for status: CapabilityItemStatus) -> Color {
@@ -3195,6 +3316,24 @@ private enum PluginEditorError: LocalizedError {
             return "动作类型不能为空"
         case .duplicateKey(let key):
             return "重复的键名：\(key)"
+        }
+    }
+}
+
+private struct StorageManagementSection: View {
+    let summary: String
+    let onRefresh: () async -> String
+    let onMaintain: () async -> String
+    @State private var message: String?
+
+    var body: some View {
+        Section("存储管理") {
+            Text(summary).font(.caption).foregroundStyle(.secondary)
+            if let message { Text(message).font(.caption).foregroundStyle(.secondary) }
+            HStack {
+                Button("刷新") { Task { message = await onRefresh() } }
+                Button("立即整理") { Task { message = await onMaintain() } }
+            }
         }
     }
 }

@@ -37,6 +37,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var sitReminderTimer: TimerSource!
     private var eventSubscriptionID: UUID?
     private var databaseManager: DatabaseManager?
+    private var persistenceWriteGate: PersistenceWriteGate?
+    private var bufferedEventRecorder: BufferedEventRecorder?
+    private var bufferedEventFlushTask: Task<Void, Never>?
+    private var storageMaintenanceTask: Task<Void, Never>?
     private let capabilityManager = CapabilityManager()
     private var pluginManager: PluginManager!
     private var configManager: ConfigManager!
@@ -60,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let memoryRemoteFlushInterval: UInt64 = 10 * 60 * 1_000_000_000
     private let maximumPets = 5
     private let windowDetector = WindowDetector()
+    private var terminationInProgress = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Task { @MainActor in
@@ -67,45 +72,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !terminationInProgress else { return .terminateLater }
+        terminationInProgress = true
+        Task { @MainActor in
+            await orderlyShutdown()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        chatViewModel?.cancelStreaming()
+        aiProactiveTrigger?.stop()
+    }
+
+    private func orderlyShutdown() async {
+        chatViewModel?.cancelStreaming()
         aiProactiveTrigger?.stop()
         timeWeatherController.stop()
         memoryRemoteSyncTask?.cancel()
         memoryRemoteSyncTask = nil
+        _ = persistenceWriteGate?.seal()
+        bufferedEventFlushTask?.cancel()
+        storageMaintenanceTask?.cancel()
+
+        await timerSource?.stop()
+        await hourBoundaryTimer?.stop()
+        await sitReminderTimer?.stop()
+        await workspaceMonitor?.stop()
+        await notificationMonitor?.stop()
+        await githubMonitor?.stop()
+        await calendarMonitor?.stop()
+        await clipboardMonitor?.stop()
+        await fsEventsMonitor?.stop()
+        await keyboardMonitor?.stop()
+        await webhookServer?.stop()
+        await pluginManager?.stop()
+        if let eventSubscriptionID { await eventBus.unsubscribe(eventSubscriptionID) }
+        _ = try? await bufferedEventRecorder?.flushUntilEmpty()
+        await databaseManager?.close()
         VitaPetApp.releaseAppLock()
-
-        let timerSource = timerSource
-        let hourBoundaryTimer = hourBoundaryTimer
-        let sitReminderTimer = sitReminderTimer
-        let workspaceMonitor = workspaceMonitor
-        let notificationMonitor = notificationMonitor
-        let githubMonitor = githubMonitor
-        let calendarMonitor = calendarMonitor
-        let clipboardMonitor = clipboardMonitor
-        let fsEventsMonitor = fsEventsMonitor
-        let keyboardMonitor = keyboardMonitor
-        let webhookServer = webhookServer
-        let eventBus = eventBus
-        let eventSubscriptionID = eventSubscriptionID
-
-        Task {
-            await timerSource?.stop()
-            await hourBoundaryTimer?.stop()
-            await sitReminderTimer?.stop()
-            await workspaceMonitor?.stop()
-            await notificationMonitor?.stop()
-            await githubMonitor?.stop()
-            await calendarMonitor?.stop()
-            await clipboardMonitor?.stop()
-            await fsEventsMonitor?.stop()
-            await keyboardMonitor?.stop()
-            await webhookServer?.stop()
-            await pluginManager?.stop()
-
-            if let eventSubscriptionID {
-                await eventBus.unsubscribe(eventSubscriptionID)
-            }
-        }
     }
 
     private func bootstrap() async {
@@ -143,7 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let chatViewModel = ChatViewModel(
-            sendToAI: { [weak self] message, _ in
+            sendToAI: { [weak self] conversationId, message, _ in
                 guard let self else {
                     throw OllamaServiceError.serviceUnavailable
                 }
@@ -153,12 +160,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
 
                 let targetPetIDs = await MainActor.run {
-                    self.resolvedConversationTargetPetIDs(for: chatViewModel)
-                }
-                let sessionId = await MainActor.run {
-                    chatViewModel.selectedConversationId
-                        ?? self.fallbackConversationId(for: targetPetIDs)
-                        ?? "default"
+                    self.resolvedConversationTargetPetIDs(
+                        for: conversationId,
+                        in: chatViewModel
+                    )
                 }
                 let userSomersaultCount = await MainActor.run {
                     Self.parseSomersaultCount(from: message)
@@ -166,7 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let preparedRequest = try await self.prepareConversationRequest(
                     text: message,
                     targetPetIDs: targetPetIDs,
-                    sessionId: sessionId,
+                    sessionId: conversationId,
                     userSomersaultCount: userSomersaultCount,
                     markChatToolActions: true
                 )
@@ -177,15 +182,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         )
         self.chatViewModel = chatViewModel
-        chatViewModel.onUserSent = { [weak self, weak chatViewModel] in
+        chatViewModel.onUserSent = { [weak self] _, userMessage in
             Task { @MainActor in
                 guard let self else {
                     return
                 }
 
                 // 用户输入快路径：识别「翻N个跟头」直接触发，不依赖模型
-                if let lastUser = chatViewModel?.currentMessages.last(where: { $0.role == .user })?.content,
-                   let count = Self.parseSomersaultCount(from: lastUser) {
+                if let count = Self.parseSomersaultCount(from: userMessage.content) {
                     self.chatPathSomersaultFired = true
                     for controller in self.petWindowControllers.values {
                         controller.executeAIAction("somersault", count: count)
@@ -200,7 +204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        chatViewModel.onAssistantReplied = { [weak self, weak chatViewModel] in
+        chatViewModel.onAssistantReplied = { [weak self, weak chatViewModel] conversationId, assistantMessage in
             Task { @MainActor in
                 guard let self else {
                     return
@@ -208,10 +212,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
                 // 解析最后一条助手消息中的 [ACTION:...] 标签，触发动画并清理可见文本
                     var firedAnyAction = self.chatPathSomersaultFired || self.chatPathToolActionFired
-                if let chatViewModel,
-                   let last = chatViewModel.currentMessages.last,
-                   last.role == .assistant {
-                    let (cleanText, actions) = Self.parseActionTags(from: last.content)
+                if let chatViewModel {
+                    let (cleanText, actions) = Self.parseActionTags(from: assistantMessage.content)
 
                     for action in actions {
                         if action.name == "somersault" && self.chatPathSomersaultFired {
@@ -223,8 +225,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         firedAnyAction = true
                     }
 
-                    if cleanText != last.content {
-                        chatViewModel.replaceLastAssistantContent(cleanText)
+                    if cleanText != assistantMessage.content {
+                        chatViewModel.replaceAssistantContent(
+                            cleanText,
+                            messageId: assistantMessage.id,
+                            conversationId: conversationId
+                        )
                     }
                 }
 
@@ -467,12 +473,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 AppLogger.error("Failed to save notification config: \(error.localizedDescription)")
             }
         }
+        let onSaveChatAppearance: @MainActor (Bool, Double) -> Void = { [weak configManager] enabled, opacity in
+            guard let configManager else {
+                return
+            }
+
+            let resolvedOpacity = Self.normalizedChatWindowOpacity(opacity)
+            do {
+                try configManager.update {
+                    $0.chatWindowTranslucencyEnabled = enabled
+                    $0.chatWindowOpacity = resolvedOpacity
+                }
+            } catch {
+                AppLogger.error("Failed to save chat appearance config: \(error.localizedDescription)")
+            }
+        }
 
         do {
-            try await databaseManager.initialize()
+            _ = try await databaseManager.initialize()
             try await databaseManager.migrateMemoryHashesToStableFingerprintIfNeeded()
         } catch {
             AppLogger.error("Failed to initialize database: \(error.localizedDescription)")
+            return
         }
 
         await ollamaService.setOnConversationUpdated { [weak databaseManager] role, content, sessionId, petId, petName in
@@ -489,13 +511,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         self.databaseManager = databaseManager
+        self.persistenceWriteGate = PersistenceWriteGate()
+        self.bufferedEventRecorder = BufferedEventRecorder { [weak databaseManager] batch in
+            guard let databaseManager else {
+                throw NSError(domain: "VitaPet.Persistence", code: 1, userInfo: [NSLocalizedDescriptionKey: "Database unavailable"])
+            }
+            return try await databaseManager.commitEventRollupBatch(batch)
+        }
+        let recorder = self.bufferedEventRecorder
+        self.bufferedEventFlushTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
+                guard !Task.isCancelled, let recorder else { continue }
+                _ = try? await recorder.flush()
+            }
+        }
+        self.storageMaintenanceTask = Task { [weak databaseManager] in
+            try? await Task.sleep(nanoseconds: 60 * 1_000_000_000)
+            while !Task.isCancelled {
+                if let databaseManager {
+                    _ = try? await databaseManager.performStorageMaintenance()
+                }
+                try? await Task.sleep(nanoseconds: UInt64(StoragePolicy.default.maintenanceInterval * 1_000_000_000))
+            }
+        }
         await syncFromRemoteMemories(databaseManager: databaseManager)
         await pushUnsyncedMemoriesToRemote()
         await refreshMemoryContext()
         startMemoryRemoteSyncTaskIfNeeded()
-        Task {
-            try? await databaseManager.pruneOldEvents(keepDays: 30)
-        }
         self.configManager = configManager
         await warmupSecurityState()
         do {
@@ -609,7 +652,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 ollamaService: ollamaService,
                 pets: configManager.config.pets
             )
-            try? await databaseManager.deleteOldTurns(keepLast: 100)
         } catch {
             AppLogger.error("Failed to initialize conversations: \(error.localizedDescription)")
         }
@@ -777,6 +819,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 configManager?.config.webhookSecret ?? ""
             },
             onSaveNotificationConfig: onSaveNotificationConfig
+        )
+        chatController.configureChatAppearance(
+            translucencyEnabled: { [weak configManager] in
+                configManager?.config.chatWindowTranslucencyEnabled ?? false
+            },
+            opacity: { [weak configManager] in
+                configManager?.config.chatWindowOpacity ?? 1.0
+            },
+            onSave: onSaveChatAppearance
+        )
+        chatController.configureStorageManagement(
+            summary: {
+                "每个会话保留最近 500 条；旧记录按 250 条压缩归档；文件事件每 30 秒批量写入。"
+            },
+            onRefresh: { [weak self] in
+                guard let databaseManager = self?.databaseManager else { return "数据库不可用" }
+                do {
+                    let archives = try await databaseManager.listConversationArchives()
+                    return "当前压缩归档 \(archives.count) 个"
+                } catch {
+                    return "读取存储状态失败：\(error.localizedDescription)"
+                }
+            },
+            onMaintain: { [weak self] in
+                guard let databaseManager = self?.databaseManager else { return "数据库不可用" }
+                do {
+                    let result = try await databaseManager.performStorageMaintenance()
+                    return "已整理：归档 \(result.archivedTurnCount) 条，回填 \(result.rolledUpEventCount) 条，删除事件 \(result.deletedEventCount) 条"
+                } catch {
+                    return "整理失败：\(error.localizedDescription)"
+                }
+            }
         )
         chatController.configureDesktopAwarenessSettings(
             isEnabled: { [weak self] in
@@ -1567,7 +1641,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         })
         calendarMonitor = CalendarMonitor()
         clipboardMonitor = await ClipboardMonitor()
-        fsEventsMonitor = FSEventsMonitor(paths: [NSHomeDirectory()])
+        let applicationSupportRoot = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("VitaPet", isDirectory: true)
+            .path
+        fsEventsMonitor = FSEventsMonitor(
+            paths: [NSHomeDirectory()],
+            excludedRoots: [applicationSupportRoot]
+        )
         // 请求辅助功能权限（全局快捷键需要）
         requestAccessibilityPermission()
         keyboardMonitor = KeyboardMonitor()
@@ -1924,15 +2005,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        Task {
-            do {
+        if case let .fileChanged(path, flags) = event,
+           let bufferedEventRecorder {
+            Task {
+                await bufferedEventRecorder.record(
+                    FileEventDelivery(path: path, flags: flags)
+                )
+            }
+            return
+        }
+
+        guard let persistenceWriteGate else { return }
+        do {
+            let task = try persistenceWriteGate.submit {
                 try await databaseManager.insertEvent(
                     source: event.caseName,
                     payload: try Self.encodeEventPayload(from: event.metadata)
                 )
-            } catch {
-                AppLogger.error("Failed to record event: \(error.localizedDescription)")
             }
+            Task {
+                do { try await task.value }
+                catch {
+                AppLogger.error("Failed to record event: \(error.localizedDescription)")
+                }
+            }
+        } catch {
+            AppLogger.error("Persistence write gate closed: \(error.localizedDescription)")
         }
     }
 
@@ -2548,12 +2646,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         for packID in SpritePackLoader.builtInPackIDs.sorted() {
             let destinationDirectory = spritePacksDirectory.appendingPathComponent(packID, isDirectory: true)
-            let manifestURL = destinationDirectory.appendingPathComponent("manifest.json")
-            guard !fileManager.fileExists(atPath: manifestURL.path) else {
+            guard let sourceDirectory = SpritePackLoader.bundledSpritePackDirectory(named: packID) else {
                 continue
             }
 
-            guard let sourceDirectory = SpritePackLoader.bundledSpritePackDirectory(named: packID) else {
+            guard shouldRefreshBuiltInSpritePack(
+                at: destinationDirectory,
+                from: sourceDirectory,
+                fileManager: fileManager
+            ) else {
                 continue
             }
 
@@ -2563,6 +2664,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             try fileManager.copyItem(at: sourceDirectory, to: destinationDirectory)
         }
+    }
+
+    private func shouldRefreshBuiltInSpritePack(
+        at destinationDirectory: URL,
+        from sourceDirectory: URL,
+        fileManager: FileManager
+    ) -> Bool {
+        guard fileManager.fileExists(
+            atPath: destinationDirectory.appendingPathComponent("manifest.json").path
+        ) else {
+            return true
+        }
+
+        guard let sourceManifest = loadSpritePackManifest(at: sourceDirectory) else {
+            return false
+        }
+        guard let destinationManifest = loadSpritePackManifest(at: destinationDirectory) else {
+            return true
+        }
+
+        if sourceManifest.name != destinationManifest.name ||
+            sourceManifest.version != destinationManifest.version ||
+            sourceManifest.sounds != destinationManifest.sounds ||
+            sourceManifest.language != destinationManifest.language {
+            return true
+        }
+
+        for (stateKey, sourceState) in sourceManifest.states {
+            guard let destinationState = destinationManifest.states[stateKey] else {
+                return true
+            }
+            if sourceState.frames != destinationState.frames ||
+                sourceState.frameInterval != destinationState.frameInterval ||
+                sourceState.loop != destinationState.loop {
+                return true
+            }
+        }
+
+        let frameNames = Set(sourceManifest.states.values.flatMap(\.frames))
+        for frameName in frameNames {
+            let frameURL = destinationDirectory.appendingPathComponent("\(frameName).png")
+            if !fileManager.fileExists(atPath: frameURL.path) {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private func loadSpritePackManifest(at directory: URL) -> SpriteManifest? {
+        let manifestURL = directory.appendingPathComponent("manifest.json")
+        guard let data = try? Data(contentsOf: manifestURL) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(SpriteManifest.self, from: data)
     }
 
     private func createDeclarativePluginTemplate(
@@ -2661,8 +2817,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return parts.joined(separator: "")
     }
 
-    private func resolvedConversationTargetPetIDs(for chatViewModel: ChatViewModel) -> Set<UUID> {
-        let participantIDs = Set(chatViewModel.currentParticipantIds)
+    private func resolvedConversationTargetPetIDs(
+        for conversationId: String,
+        in chatViewModel: ChatViewModel
+    ) -> Set<UUID> {
+        let participantIDs = Set(
+            chatViewModel.conversations
+                .first(where: { $0.id == conversationId })?
+                .participantIds ?? []
+        )
         if !participantIDs.isEmpty {
             return participantIDs
         }
@@ -2688,6 +2851,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let ollamaService else {
             throw OllamaServiceError.serviceUnavailable
         }
+        try Task.checkCancellation()
 
         let (tool, uniqueActions) = buildConversationActionTool()
         await ollamaService.updateAvailableActions(uniqueActions)
@@ -2695,6 +2859,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let systemPrompt = configManager.config.aiSystemPrompt
         await ollamaService.updateSystemPrompt(systemPrompt)
         await refreshMemoryContext()
+        try Task.checkCancellation()
 
         let targetPets = configManager.config.pets.filter { targetPetIDs.contains($0.id) }
         let isGroupChat = targetPets.count > 1
@@ -2719,6 +2884,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             await ollamaService.updatePetProfile("")
         }
+        try Task.checkCancellation()
 
         let stream = try await ollamaService.sendWithTools(
             message: text,
@@ -2745,7 +2911,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         userSomersaultCount: Int?,
         markChatToolActions: Bool
     ) async -> String? {
-        guard toolCall.functionName == "pet_action",
+        guard !Task.isCancelled,
+              toolCall.functionName == "pet_action",
               let action = toolCall.arguments["action"]?.stringValue else {
             return nil
         }
@@ -3342,6 +3509,10 @@ private extension AppDelegate {
             AppLogger.error("Failed to decode MCP server config: \(error.localizedDescription)")
             return []
         }
+    }
+
+    static func normalizedChatWindowOpacity(_ rawValue: Double) -> Double {
+        ChatAppearanceSettings.normalizedOpacity(rawValue)
     }
 
     static func resolvedMemoryWorkerAuthMode(from rawValue: String) -> MemoryWorkerAuthMode {

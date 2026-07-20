@@ -6,13 +6,16 @@ public actor FSEventsMonitor: EventSource {
 
     private final class CallbackContext: @unchecked Sendable {
         let eventBus: EventBus
+        let excludedRoots: [String]
 
-        init(eventBus: EventBus) {
+        init(eventBus: EventBus, excludedRoots: [String]) {
             self.eventBus = eventBus
+            self.excludedRoots = excludedRoots
         }
     }
 
     private let paths: [String]
+    private let excludedRoots: [String]
     private let latency: CFTimeInterval
     private let queue: DispatchQueue
     private var streamRef: FSEventStreamRef?
@@ -33,6 +36,13 @@ public actor FSEventsMonitor: EventSource {
             guard let changedPath = paths[index] as? String else {
                 continue
             }
+            let normalizedPath = URL(fileURLWithPath: changedPath)
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+                .path
+            guard !context.excludedRoots.contains(where: { normalizedPath == $0 || normalizedPath.hasPrefix($0 + "/") }) else {
+                continue
+            }
 
             let flags = eventFlags[Int(index)]
             Task {
@@ -43,11 +53,18 @@ public actor FSEventsMonitor: EventSource {
 
     public init(
         paths: [String],
+        excludedRoots: [String] = [],
         latency: CFTimeInterval = 0.5,
         sourceId: String = "fsEvents",
         queue: DispatchQueue? = nil
     ) {
         self.paths = paths.map {
+            URL(fileURLWithPath: $0)
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+                .path
+        }
+        self.excludedRoots = excludedRoots.map {
             URL(fileURLWithPath: $0)
                 .standardizedFileURL
                 .resolvingSymlinksInPath()
@@ -63,7 +80,7 @@ public actor FSEventsMonitor: EventSource {
             return
         }
 
-        let context = CallbackContext(eventBus: eventBus)
+        let context = CallbackContext(eventBus: eventBus, excludedRoots: excludedRoots)
         let contextPointer = Unmanaged.passRetained(context).toOpaque()
         callbackContext = contextPointer
 

@@ -16,6 +16,8 @@ public actor DatabaseManager {
         self.databaseURL = databaseURL
     }
 
+    func maintenanceDatabaseURL() -> URL { databaseURL }
+
     public func close() {
         if let db {
             sqlite3_close(db)
@@ -23,75 +25,37 @@ public actor DatabaseManager {
         }
     }
 
-    public func initialize() throws {
-        let database = try getOrOpenDatabase()
-
-        try Self.execute(
-            """
-            CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT DEFAULT(datetime('now')),
-                source TEXT,
-                payload TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS pet_state (
-                pet_id TEXT PRIMARY KEY,
-                animation_state TEXT,
-                position_x REAL,
-                position_y REAL,
-                screen_id TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS conversation_turns (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                timestamp REAL NOT NULL,
-                session_id TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS conversations (
-                id TEXT PRIMARY KEY,
-                type TEXT NOT NULL,
-                participant_ids TEXT NOT NULL,
-                title TEXT NOT NULL,
-                last_message TEXT DEFAULT '',
-                last_timestamp REAL DEFAULT 0,
-                unread_count INTEGER DEFAULT 0
-            );
-
-            CREATE TABLE IF NOT EXISTS ai_memories (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                content TEXT NOT NULL,
-                category TEXT NOT NULL,
-                created_at REAL NOT NULL,
-                importance INTEGER DEFAULT 1
-            );
-            """,
-            in: database
-        )
-
-        // Migration: add pet columns to conversation_turns
-        try? Self.execute("ALTER TABLE conversation_turns ADD COLUMN pet_id TEXT", in: database)
-        try? Self.execute("ALTER TABLE conversation_turns ADD COLUMN pet_name TEXT", in: database)
-
-        // Migration: structured memory metadata
-        try? Self.execute("ALTER TABLE ai_memories ADD COLUMN content_hash TEXT", in: database)
-        try? Self.execute("ALTER TABLE ai_memories ADD COLUMN remote_id TEXT", in: database)
-        try? Self.execute("ALTER TABLE ai_memories ADD COLUMN synced_at REAL", in: database)
-        try? Self.execute("ALTER TABLE ai_memories ADD COLUMN source TEXT DEFAULT 'auto'", in: database)
-        try? Self.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_memories_content_hash ON ai_memories(content_hash);",
-            in: database
-        )
+    @discardableResult
+    public func initialize() throws -> StorageSchemaReadiness {
+        try initializeStorage()
     }
 
-    private func getOrOpenDatabase() throws -> OpaquePointer? {
+    func getOrOpenDatabase() throws -> OpaquePointer? {
         if let db {
             return db
         }
         let database = try openDatabase()
+        do {
+            let applicationTableCount = try Self.databaseScalarInt(
+                """
+                SELECT COUNT(*)
+                FROM sqlite_master
+                WHERE type = 'table' AND name NOT LIKE 'sqlite_%';
+                """,
+                in: database
+            )
+            let schemaVersion = try Self.databaseScalarInt("PRAGMA user_version;", in: database)
+            let pageCount = try Self.databaseScalarInt("PRAGMA page_count;", in: database)
+            if applicationTableCount == 0 && schemaVersion == 0 && pageCount == 0 {
+                try Self.execute("PRAGMA auto_vacuum = INCREMENTAL;", in: database)
+                guard try Self.databaseScalarInt("PRAGMA auto_vacuum;", in: database) == 2 else {
+                    throw SQLiteError(message: "Failed to enable incremental auto-vacuum.")
+                }
+            }
+        } catch {
+            sqlite3_close(database)
+            throw error
+        }
         // Enable WAL mode for better concurrent access
         sqlite3_exec(database, "PRAGMA journal_mode=WAL;", nil, nil, nil)
         // Set busy timeout to 5 seconds instead of failing immediately
@@ -552,32 +516,6 @@ public actor DatabaseManager {
         }
     }
 
-    public func deleteOldTurns(keepLast: Int) async throws {
-        let database = try getOrOpenDatabase()
-
-        let statement = try Self.prepare(
-            """
-            DELETE FROM conversation_turns
-            WHERE id NOT IN (
-                SELECT id
-                FROM conversation_turns
-                ORDER BY id DESC
-                LIMIT ?
-            );
-            """,
-            in: database
-        )
-        defer { sqlite3_finalize(statement) }
-
-        try Self.bind(int: keepLast, at: 1, in: statement, database: database)
-        try Self.step(statement, in: database)
-    }
-
-    public func clearConversation() async throws {
-        let database = try getOrOpenDatabase()
-        try Self.execute("DELETE FROM conversation_turns;", in: database)
-    }
-
     public func insertConversation(
         id: String,
         type: String,
@@ -698,28 +636,6 @@ public actor DatabaseManager {
         try Self.bind(text: idsString, at: 1, in: statement)
         try Self.bind(text: id, at: 2, in: statement)
         try Self.step(statement, in: database)
-    }
-
-    public func deleteConversation(id: String) async throws {
-        let database = try getOrOpenDatabase()
-
-        let deleteConversationStatement = try Self.prepare(
-            "DELETE FROM conversations WHERE id = ?;",
-            in: database
-        )
-        defer { sqlite3_finalize(deleteConversationStatement) }
-
-        try Self.bind(text: id, at: 1, in: deleteConversationStatement)
-        try Self.step(deleteConversationStatement, in: database)
-
-        let deleteTurnsStatement = try Self.prepare(
-            "DELETE FROM conversation_turns WHERE session_id = ?;",
-            in: database
-        )
-        defer { sqlite3_finalize(deleteTurnsStatement) }
-
-        try Self.bind(text: id, at: 1, in: deleteTurnsStatement)
-        try Self.step(deleteTurnsStatement, in: database)
     }
 
     public struct MemoryRecord: Sendable, Equatable {
@@ -1100,6 +1016,18 @@ extension DatabaseManager {
         guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
             throw sqliteError(in: database)
         }
+    }
+
+    private static func databaseScalarInt(
+        _ sql: String,
+        in database: OpaquePointer?
+    ) throws -> Int64 {
+        let statement = try prepare(sql, in: database)
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            throw sqliteError(in: database)
+        }
+        return sqlite3_column_int64(statement, 0)
     }
 
     private static func prepare(_ sql: String, in database: OpaquePointer?) throws -> OpaquePointer? {
