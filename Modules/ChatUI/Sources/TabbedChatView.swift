@@ -6,12 +6,21 @@ import SwiftUI
 public struct TabbedChatView: View {
     @Bindable var viewModel: ChatViewModel
     let availablePets: [(id: UUID, name: String)]
+    let chatAppearance: ChatAppearanceSettings
+    let onSaveChatAppearance: @MainActor (Bool, Double) -> Void
 
     @State private var showCreateGroup = false
 
-    public init(viewModel: ChatViewModel, availablePets: [(id: UUID, name: String)] = []) {
+    public init(
+        viewModel: ChatViewModel,
+        availablePets: [(id: UUID, name: String)] = [],
+        chatAppearance: ChatAppearanceSettings = ChatAppearanceSettings(),
+        onSaveChatAppearance: @escaping @MainActor (Bool, Double) -> Void = { _, _ in }
+    ) {
         self.viewModel = viewModel
         self.availablePets = availablePets
+        self.chatAppearance = chatAppearance
+        self.onSaveChatAppearance = onSaveChatAppearance
     }
 
     public var body: some View {
@@ -32,7 +41,11 @@ public struct TabbedChatView: View {
             .navigationSplitViewColumnWidth(min: 250, ideal: 280, max: 320)
         } detail: {
             if viewModel.selectedConversationId != nil {
-                ChatView(viewModel: viewModel)
+                ChatView(
+                    viewModel: viewModel,
+                    chatAppearance: chatAppearance,
+                    onSaveChatAppearance: onSaveChatAppearance
+                )
             } else {
                 emptyDetailState
             }
@@ -56,29 +69,13 @@ public struct TabbedChatView: View {
 
     private var emptyDetailState: some View {
         ZStack {
-            LinearGradient(
-                colors: [
-                    Color(nsColor: .windowBackgroundColor),
-                    Color(nsColor: .underPageBackgroundColor)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
+            Color(nsColor: .windowBackgroundColor)
+                .ignoresSafeArea()
 
             VStack(spacing: 18) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color(red: 0.15, green: 0.17, blue: 0.22),
-                                    Color(red: 0.26, green: 0.29, blue: 0.36)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color.accentColor.opacity(0.88))
 
                     Image(systemName: "bubble.left.and.bubble.right.fill")
                         .font(.system(size: 34, weight: .semibold))
@@ -126,18 +123,8 @@ struct CreateGroupView: View {
         VStack(spacing: 20) {
             HStack(alignment: .top, spacing: 14) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color.accentColor,
-                                    Color.accentColor.opacity(0.72)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .shadow(color: Color.accentColor.opacity(0.3), radius: 6, x: 0, y: 3)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.accentColor)
 
                     Image(systemName: "person.3.fill")
                         .font(.system(size: 18, weight: .semibold))
@@ -204,14 +191,7 @@ struct CreateGroupView: View {
                                     .fill(
                                         isSelected
                                             ? AnyShapeStyle(
-                                                LinearGradient(
-                                                    colors: [
-                                                        Color.accentColor.opacity(0.18),
-                                                        Color.accentColor.opacity(0.08)
-                                                    ],
-                                                    startPoint: .topLeading,
-                                                    endPoint: .bottomTrailing
-                                                )
+                                                Color.accentColor.opacity(0.14)
                                             )
                                             : AnyShapeStyle(Color(nsColor: .textBackgroundColor).opacity(0.6))
                                     )

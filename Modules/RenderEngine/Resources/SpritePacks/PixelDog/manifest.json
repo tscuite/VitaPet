@@ -1,564 +1,1045 @@
 {
-  "language": {
-    "alert": [
+  "language" : {
+    "alert" : [
       "汪汪汪！注意！",
       "有情况！"
     ],
-    "angry": [
+    "angry" : [
       "汪汪汪！",
       "生气了！",
       "别烦我！"
     ],
-    "bounce": [
+    "beg" : [
+      "可以陪我玩吗？",
+      "求关注~"
+    ],
+    "blink" : [
+      "眨眨眼~",
+      "看到你啦。"
+    ],
+    "blush" : [
+      "有点害羞。",
+      "嘿嘿。"
+    ],
+    "bounce" : [
       "蹦蹦跳~",
       "弹起来！"
     ],
-    "bubbleTexts": [
+    "boxingCombo" : [
+      "拳击连招！",
+      "防守、试探、出拳。"
+    ],
+    "bubbleTexts" : [
       "汪！",
       "别戳我啦~",
       "汪汪~",
       "有什么事吗？"
     ],
-    "celebrate": [
+    "celebrate" : [
       "耶！🎉",
       "太棒了汪！",
       "开心！"
     ],
-    "chat": [
+    "chat" : [
       "汪汪~",
       "然后呢？",
       "原来如此汪~"
     ],
-    "climb": [
+    "climb" : [
       "爬上去！",
       "好高汪~"
     ],
-    "confused": [
+    "coffee" : [
+      "补充能量。",
+      "喝一口。"
+    ],
+    "confused" : [
       "？？？",
       "什么情况汪？"
     ],
-    "dance": [
+    "crawl" : [
+      "慢慢爬行。",
+      "低调靠近。"
+    ],
+    "crouch" : [
+      "悄悄蹲下。",
+      "准备出发。"
+    ],
+    "dance" : [
       "跳舞~♪",
       "嗨起来！",
       "♪♪♪"
     ],
-    "doubleClickTexts": [
+    "danceCombo" : [
+      "来一段连舞！",
+      "转身、滑步、闪亮收尾。"
+    ],
+    "doubleClickTexts" : [
       "太开心啦！汪汪！",
       "好喜欢你！",
       "摇尾巴~",
       "开心到转圈圈~"
     ],
-    "drink": [
+    "dream" : [
+      "做了个甜梦。",
+      "梦里也在陪你。"
+    ],
+    "drink" : [
       "咕噜咕噜~",
       "好渴汪~"
     ],
-    "eat": [
+    "eat" : [
       "好吃！汪！",
       "还要还要！",
       "骨头！",
       "吃饱啦~"
     ],
-    "gift": [
+    "gift" : [
       "送你~🎁",
       "收下吧汪！"
     ],
-    "groom": [
+    "groom" : [
       "舔舔~",
       "要干干净净的~"
     ],
-    "headShake": [
+    "guard" : [
+      "我来守着。",
+      "保持警戒。"
+    ],
+    "headShake" : [
       "不要汪！",
       "才不呢~"
     ],
-    "idle": [
+    "idle" : [
       "汪~",
       "...",
       "好无聊...",
       "想出去玩~"
     ],
-    "lookAround": [
+    "joySpinCombo" : [
+      "开心到转圈圈！",
+      "转一圈，闪一下。"
+    ],
+    "lookAround" : [
       "闻闻~",
       "这边有什么味道？"
     ],
-    "love": [
+    "love" : [
       "❤️",
       "好喜欢你~",
       "蹭蹭~"
     ],
-    "nod": [
+    "meditate" : [
+      "安静一下。",
+      "保持平衡。"
+    ],
+    "melt" : [
+      "软掉了。",
+      "需要一点安慰。"
+    ],
+    "nap" : [
+      "小睡一下。",
+      "呼噜呼噜。"
+    ],
+    "nod" : [
       "汪！同意！",
       "嗯嗯！"
     ],
-    "peek": [
+    "nuzzle" : [
+      "蹭蹭你。",
+      "贴贴。"
+    ],
+    "parkourCombo" : [
+      "跑酷连招！",
+      "扑跃、滑步、翻滚一气呵成。"
+    ],
+    "partyCombo" : [
+      "派对表演时间！",
+      "唱歌跳舞再闪一下。"
+    ],
+    "pawReach" : [
+      "伸爪爪。",
+      "够一下。"
+    ],
+    "pawTap" : [
+      "拍拍你。",
+      "注意到我了吗？"
+    ],
+    "peek" : [
       "偷看一下~",
       "嘿嘿~"
     ],
-    "phone": [
+    "phone" : [
       "谁的消息？",
       "刷刷手机~"
     ],
-    "play": [
+    "play" : [
       "好好玩！",
       "再来一次！",
       "汪汪！"
     ],
-    "react": [
+    "pounce" : [
+      "扑过去！",
+      "抓到啦！"
+    ],
+    "proud" : [
+      "我很厉害吧。",
+      "挺胸！"
+    ],
+    "react" : [
       "汪！",
       "什么！",
       "嗯？"
     ],
-    "read": [
+    "read" : [
       "好有趣~",
       "看书中~"
     ],
-    "roll": [
+    "roll" : [
       "打滚~",
       "咕噜~"
     ],
-    "run": [
+    "run" : [
       "冲呀！汪！",
       "追不上我~",
       "跑起来！"
     ],
-    "sad": [
+    "sad" : [
       "呜呜...",
       "不开心...",
       "主人不理我..."
     ],
-    "scared": [
+    "scared" : [
       "好可怕！",
       "救命汪！",
       "怕怕..."
     ],
-    "scratch": [
+    "scratch" : [
       "痒痒~",
       "挠挠~"
     ],
-    "shy": [
+    "shy" : [
       "害羞汪...",
       "别看我..."
     ],
-    "sit": [
+    "sing" : [
+      "啦啦啦~",
+      "唱给你听。"
+    ],
+    "sit" : [
       "坐下！",
       "乖乖坐~"
     ],
-    "sleep": [
+    "sleep" : [
       "💤",
       "好困...",
       "zzZ~",
       "呼噜~"
     ],
-    "sneeze": [
+    "slide" : [
+      "滑过去。",
+      "咻~"
+    ],
+    "snack" : [
+      "吃点小零食。",
+      "好吃！"
+    ],
+    "sneeze" : [
       "阿嚏！",
       "哈啾~"
     ],
-    "spin": [
+    "sniff" : [
+      "闻闻看~",
+      "这里有新味道。"
+    ],
+    "somersaultCombo" : [
+      "翻跟头连招启动！",
+      "落地接一记帅气收势。"
+    ],
+    "sparkle" : [
+      "闪亮登场！",
+      "发光中。"
+    ],
+    "spin" : [
       "转圈圈~",
       "好晕汪~"
     ],
-    "stretch": [
+    "stargaze" : [
+      "看看星星。",
+      "今天也很亮。"
+    ],
+    "stretch" : [
       "伸懒腰~",
       "好舒服汪~"
     ],
-    "think": [
+    "surprised" : [
+      "哇！",
+      "发生什么啦？"
+    ],
+    "tailWag" : [
+      "开心摇摇！",
+      "尾巴停不下来。"
+    ],
+    "think" : [
       "嗯...",
       "让我想想...",
       "思考中汪..."
     ],
-    "trip": [
+    "trainingCombo" : [
+      "训练连招！",
+      "热身、扑跃、出拳、得意收尾。"
+    ],
+    "trip" : [
       "哎呀！",
       "摔了汪..."
     ],
-    "type": [
+    "type" : [
       "噼里啪啦~",
       "打字中..."
     ],
-    "walk": [
+    "walk" : [
       "散步！",
       "汪汪走~",
       "这边闻闻~"
     ],
-    "wave": [
+    "wave" : [
       "嗨！你好~",
       "拜拜汪~"
     ],
-    "write": [
+    "write" : [
       "写写写~",
       "灵感来了！"
     ],
-    "yawn": [
+    "yawn" : [
       "哈欠~",
       "好困呀~"
     ]
   },
-  "name": "PixelDog",
-  "states": {
-    "alert": {
-      "frameInterval": 0.2,
-      "frames": [
+  "name" : "PixelDog",
+  "sounds" : {
+    "alert" : "sounds/alert.wav",
+    "angry" : "sounds/angry.wav",
+    "bounce" : "sounds/bounce.wav",
+    "celebrate" : "sounds/celebrate.wav",
+    "chat" : "sounds/chat.wav",
+    "cheer" : "sounds/cheer.wav",
+    "confused" : "sounds/confused.wav",
+    "dance" : "sounds/dance.wav",
+    "drink" : "sounds/drink.wav",
+    "eat" : "sounds/eat.wav",
+    "gift" : "sounds/gift.wav",
+    "land" : "sounds/land.wav",
+    "love" : "sounds/love.wav",
+    "phone" : "sounds/phone.wav",
+    "play" : "sounds/play.wav",
+    "react" : "sounds/react.wav",
+    "read" : "sounds/read.wav",
+    "roll" : "sounds/roll.wav",
+    "run" : "sounds/run.wav",
+    "sad" : "sounds/sad.wav",
+    "scared" : "sounds/scared.wav",
+    "scratch" : "sounds/scratch.wav",
+    "shy" : "sounds/shy.wav",
+    "sit" : "sounds/sit.wav",
+    "sleep" : "sounds/sleep.wav",
+    "sneeze" : "sounds/sneeze.wav",
+    "spin" : "sounds/spin.wav",
+    "trip" : "sounds/trip.wav",
+    "type" : "sounds/type.wav",
+    "walk" : "sounds/walk.wav",
+    "write" : "sounds/write.wav",
+    "yawn" : "sounds/yawn.wav"
+  },
+  "states" : {
+    "alert" : {
+      "frameInterval" : 0.20000000000000001,
+      "frames" : [
         "dog_alert_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "angry": {
-      "frameInterval": 0.3,
-      "frames": [
+    "angry" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "dog_angry_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "bounce": {
-      "frameInterval": 0.12,
-      "frames": [
+    "beg" : {
+      "frameInterval" : 0.14000000000000001,
+      "frames" : [
+        "dog_beg_0",
+        "dog_beg_1",
+        "dog_beg_2",
+        "dog_beg_3"
+      ],
+      "loop" : false
+    },
+    "blink" : {
+      "frameInterval" : 0.089999999999999997,
+      "frames" : [
+        "dog_blink_0",
+        "dog_blink_1",
+        "dog_blink_2",
+        "dog_blink_3"
+      ],
+      "loop" : false
+    },
+    "blush" : {
+      "frameInterval" : 0.17999999999999999,
+      "frames" : [
+        "dog_blush_0",
+        "dog_blush_1",
+        "dog_blush_2",
+        "dog_blush_3"
+      ],
+      "loop" : false
+    },
+    "bounce" : {
+      "frameInterval" : 0.12,
+      "frames" : [
         "dog_bounce_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "celebrate": {
-      "frameInterval": 0.12,
-      "frames": [
+    "boxingCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "dog_guard_0",
+        "dog_guard_2",
+        "dog_pawTap_0",
+        "dog_pawReach_0",
+        "dog_angry_0",
+        "dog_pawReach_2",
+        "dog_proud_0"
+      ],
+      "loop" : false
+    },
+    "celebrate" : {
+      "frameInterval" : 0.12,
+      "frames" : [
         "dog_celebrate_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "chat": {
-      "frameInterval": 0.3,
-      "frames": [
+    "chat" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "dog_chat_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "cheer": {
-      "frameInterval": 0.15,
-      "frames": [
+    "cheer" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "dog_cheer_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "climb": {
-      "frameInterval": 0.2,
-      "frames": [
+    "climb" : {
+      "frameInterval" : 0.20000000000000001,
+      "frames" : [
         "dog_climb_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "confused": {
-      "frameInterval": 0.3,
-      "frames": [
+    "coffee" : {
+      "frameInterval" : 0.22,
+      "frames" : [
+        "dog_coffee_0",
+        "dog_coffee_1",
+        "dog_coffee_2",
+        "dog_coffee_3"
+      ],
+      "loop" : false
+    },
+    "confused" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "dog_confused_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "dance": {
-      "frameInterval": 0.15,
-      "frames": [
+    "crawl" : {
+      "frameInterval" : 0.12,
+      "frames" : [
+        "dog_crawl_0",
+        "dog_crawl_1",
+        "dog_crawl_2",
+        "dog_crawl_3"
+      ],
+      "loop" : false
+    },
+    "crouch" : {
+      "frameInterval" : 0.14000000000000001,
+      "frames" : [
+        "dog_crouch_0",
+        "dog_crouch_1",
+        "dog_crouch_2"
+      ],
+      "loop" : false
+    },
+    "dance" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "dog_dance_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "drag": {
-      "frameInterval": 0.25,
-      "frames": [
+    "danceCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "dog_dance_0",
+        "dog_slide_0",
+        "dog_slide_1",
+        "dog_spin_0",
+        "dog_tailWag_0",
+        "dog_tailWag_2",
+        "dog_sparkle_0",
+        "dog_sparkle_3",
+        "dog_proud_0"
+      ],
+      "loop" : false
+    },
+    "drag" : {
+      "frameInterval" : 0.25,
+      "frames" : [
         "dog_drag_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "drink": {
-      "frameInterval": 0.35,
-      "frames": [
+    "dream" : {
+      "frameInterval" : 0.32000000000000001,
+      "frames" : [
+        "dog_dream_0",
+        "dog_dream_1",
+        "dog_dream_2",
+        "dog_dream_3"
+      ],
+      "loop" : false
+    },
+    "drink" : {
+      "frameInterval" : 0.34999999999999998,
+      "frames" : [
         "dog_drink_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "eat": {
-      "frameInterval": 0.35,
-      "frames": [
+    "eat" : {
+      "frameInterval" : 0.34999999999999998,
+      "frames" : [
         "dog_eat_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "follow": {
-      "frameInterval": 0.08,
-      "frames": [
+    "follow" : {
+      "frameInterval" : 0.080000000000000002,
+      "frames" : [
         "dog_follow_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "gift": {
-      "frameInterval": 0.4,
-      "frames": [
+    "gift" : {
+      "frameInterval" : 0.40000000000000002,
+      "frames" : [
         "dog_gift_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "groom": {
-      "frameInterval": 0.4,
-      "frames": [
+    "groom" : {
+      "frameInterval" : 0.40000000000000002,
+      "frames" : [
         "dog_groom_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "headShake": {
-      "frameInterval": 0.2,
-      "frames": [
+    "guard" : {
+      "frameInterval" : 0.22,
+      "frames" : [
+        "dog_guard_0",
+        "dog_guard_1",
+        "dog_guard_2",
+        "dog_guard_3"
+      ],
+      "loop" : true
+    },
+    "headShake" : {
+      "frameInterval" : 0.20000000000000001,
+      "frames" : [
         "dog_headShake_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "hidePeek": {
-      "frameInterval": 0.3,
-      "frames": [
+    "hidePeek" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "dog_hidePeek_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "idle": {
-      "frameInterval": 0.5,
-      "frames": [
+    "idle" : {
+      "frameInterval" : 0.5,
+      "frames" : [
         "dog_idle_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "land": {
-      "frameInterval": 0.1,
-      "frames": [
+    "joySpinCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "dog_celebrate_0",
+        "dog_spin_0",
+        "dog_sparkle_0",
+        "dog_sparkle_2",
+        "dog_tailWag_0",
+        "dog_tailWag_3",
+        "dog_proud_0"
+      ],
+      "loop" : false
+    },
+    "land" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
         "dog_land_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "listen": {
-      "frameInterval": 0.2,
-      "frames": [
+    "listen" : {
+      "frameInterval" : 0.20000000000000001,
+      "frames" : [
         "dog_listen_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "love": {
-      "frameInterval": 0.3,
-      "frames": [
+    "lookAround" : {
+      "frameInterval" : 0.34999999999999998,
+      "frames" : [
+        "dog_walk_0",
+        "dog_walk_1"
+      ],
+      "loop" : false
+    },
+    "love" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "dog_love_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "nod": {
-      "frameInterval": 0.2,
-      "frames": [
+    "meditate" : {
+      "frameInterval" : 0.41999999999999998,
+      "frames" : [
+        "dog_meditate_0",
+        "dog_meditate_1",
+        "dog_meditate_2",
+        "dog_meditate_3"
+      ],
+      "loop" : true
+    },
+    "melt" : {
+      "frameInterval" : 0.17999999999999999,
+      "frames" : [
+        "dog_melt_0",
+        "dog_melt_1",
+        "dog_melt_2",
+        "dog_melt_3"
+      ],
+      "loop" : false
+    },
+    "nap" : {
+      "frameInterval" : 0.55000000000000004,
+      "frames" : [
+        "dog_nap_0",
+        "dog_nap_1",
+        "dog_nap_2",
+        "dog_nap_3"
+      ],
+      "loop" : true
+    },
+    "nod" : {
+      "frameInterval" : 0.20000000000000001,
+      "frames" : [
         "dog_nod_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "peek": {
-      "frameInterval": 0.3,
-      "frames": [
+    "nuzzle" : {
+      "frameInterval" : 0.14000000000000001,
+      "frames" : [
+        "dog_nuzzle_0",
+        "dog_nuzzle_1",
+        "dog_nuzzle_2",
+        "dog_nuzzle_3"
+      ],
+      "loop" : false
+    },
+    "parkourCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "dog_pounce_0",
+        "dog_pounce_2",
+        "dog_slide_0",
+        "dog_slide_2",
+        "dog_roll_0",
+        "dog_spin_0",
+        "dog_land_0",
+        "dog_cheer_0"
+      ],
+      "loop" : false
+    },
+    "partyCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "dog_sing_0",
+        "dog_sing_3",
+        "dog_dance_0",
+        "dog_sparkle_0",
+        "dog_sparkle_3",
+        "dog_cheer_0",
+        "dog_tailWag_0",
+        "dog_tailWag_3",
+        "dog_blush_0"
+      ],
+      "loop" : false
+    },
+    "pawReach" : {
+      "frameInterval" : 0.12,
+      "frames" : [
+        "dog_pawReach_0",
+        "dog_pawReach_1",
+        "dog_pawReach_2",
+        "dog_pawReach_3"
+      ],
+      "loop" : false
+    },
+    "pawTap" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "dog_pawTap_0",
+        "dog_pawTap_1",
+        "dog_pawTap_2",
+        "dog_pawTap_3"
+      ],
+      "loop" : false
+    },
+    "peek" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "dog_peek_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "phone": {
-      "frameInterval": 0.4,
-      "frames": [
+    "phone" : {
+      "frameInterval" : 0.40000000000000002,
+      "frames" : [
         "dog_phone_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "pickup": {
-      "frameInterval": 0.25,
-      "frames": [
+    "pickup" : {
+      "frameInterval" : 0.25,
+      "frames" : [
         "dog_pickup_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "play": {
-      "frameInterval": 0.15,
-      "frames": [
+    "play" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "dog_play_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "react": {
-      "frameInterval": 0.15,
-      "frames": [
+    "pounce" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "dog_pounce_0",
+        "dog_pounce_1",
+        "dog_pounce_2",
+        "dog_pounce_3"
+      ],
+      "loop" : false
+    },
+    "proud" : {
+      "frameInterval" : 0.16,
+      "frames" : [
+        "dog_proud_0",
+        "dog_proud_1",
+        "dog_proud_2",
+        "dog_proud_3"
+      ],
+      "loop" : false
+    },
+    "punch" : {
+      "frameInterval" : 0.14000000000000001,
+      "frames" : [
+        "dog_angry_0"
+      ],
+      "loop" : false
+    },
+    "react" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "dog_react_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "read": {
-      "frameInterval": 0.4,
-      "frames": [
+    "read" : {
+      "frameInterval" : 0.40000000000000002,
+      "frames" : [
         "dog_read_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "roll": {
-      "frameInterval": 0.12,
-      "frames": [
+    "roll" : {
+      "frameInterval" : 0.12,
+      "frames" : [
         "dog_roll_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "run": {
-      "frameInterval": 0.08,
-      "frames": [
+    "run" : {
+      "frameInterval" : 0.080000000000000002,
+      "frames" : [
         "dog_run_0",
         "dog_run_1"
       ],
-      "loop": true
+      "loop" : true
     },
-    "sad": {
-      "frameInterval": 0.5,
-      "frames": [
+    "sad" : {
+      "frameInterval" : 0.5,
+      "frames" : [
         "dog_sad_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "scared": {
-      "frameInterval": 0.15,
-      "frames": [
+    "scared" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "dog_scared_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "scratch": {
-      "frameInterval": 0.15,
-      "frames": [
+    "scratch" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "dog_scratch_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "shy": {
-      "frameInterval": 0.3,
-      "frames": [
+    "shy" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "dog_shy_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "sit": {
-      "frameInterval": 0.6,
-      "frames": [
+    "sing" : {
+      "frameInterval" : 0.13,
+      "frames" : [
+        "dog_sing_0",
+        "dog_sing_1",
+        "dog_sing_2",
+        "dog_sing_3",
+        "dog_sing_4"
+      ],
+      "loop" : false
+    },
+    "sit" : {
+      "frameInterval" : 0.59999999999999998,
+      "frames" : [
         "dog_sit_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "sleep": {
-      "frameInterval": 0.8,
-      "frames": [
+    "sleep" : {
+      "frameInterval" : 0.80000000000000004,
+      "frames" : [
         "dog_sleep_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "sneeze": {
-      "frameInterval": 0.15,
-      "frames": [
+    "slide" : {
+      "frameInterval" : 0.089999999999999997,
+      "frames" : [
+        "dog_slide_0",
+        "dog_slide_1",
+        "dog_slide_2",
+        "dog_slide_3"
+      ],
+      "loop" : false
+    },
+    "snack" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
+        "dog_snack_0",
+        "dog_snack_1",
+        "dog_snack_2",
+        "dog_snack_3"
+      ],
+      "loop" : false
+    },
+    "sneeze" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "dog_sneeze_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "spin": {
-      "frameInterval": 0.12,
-      "frames": [
+    "sniff" : {
+      "frameInterval" : 0.14000000000000001,
+      "frames" : [
+        "dog_sniff_0",
+        "dog_sniff_1",
+        "dog_sniff_2",
+        "dog_sniff_3"
+      ],
+      "loop" : false
+    },
+    "somersault" : {
+      "frameInterval" : 0.089999999999999997,
+      "frames" : [
+        "dog_somersault_0",
+        "dog_somersault_1",
+        "dog_somersault_2",
+        "dog_somersault_3"
+      ],
+      "loop" : false
+    },
+    "somersaultCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "dog_crouch_0",
+        "dog_somersault_0",
+        "dog_somersault_1",
+        "dog_somersault_2",
+        "dog_somersault_3",
+        "dog_pawReach_0",
+        "dog_sparkle_0",
+        "dog_sparkle_3"
+      ],
+      "loop" : false
+    },
+    "sparkle" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "dog_sparkle_0",
+        "dog_sparkle_1",
+        "dog_sparkle_2",
+        "dog_sparkle_3",
+        "dog_sparkle_4"
+      ],
+      "loop" : false
+    },
+    "spin" : {
+      "frameInterval" : 0.12,
+      "frames" : [
         "dog_spin_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "stretch": {
-      "frameInterval": 0.35,
-      "frames": [
+    "stargaze" : {
+      "frameInterval" : 0.28000000000000003,
+      "frames" : [
+        "dog_stargaze_0",
+        "dog_stargaze_1",
+        "dog_stargaze_2",
+        "dog_stargaze_3"
+      ],
+      "loop" : false
+    },
+    "stretch" : {
+      "frameInterval" : 0.34999999999999998,
+      "frames" : [
         "dog_stretch_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "think": {
-      "frameInterval": 0.3,
-      "frames": [
+    "surprised" : {
+      "frameInterval" : 0.12,
+      "frames" : [
+        "dog_surprised_0",
+        "dog_surprised_1",
+        "dog_surprised_2"
+      ],
+      "loop" : false
+    },
+    "tailWag" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "dog_tailWag_0",
+        "dog_tailWag_1",
+        "dog_tailWag_2",
+        "dog_tailWag_3",
+        "dog_tailWag_4"
+      ],
+      "loop" : true
+    },
+    "think" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "dog_think_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "trip": {
-      "frameInterval": 0.12,
-      "frames": [
+    "trainingCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "dog_guard_0",
+        "dog_guard_2",
+        "dog_crouch_0",
+        "dog_pounce_0",
+        "dog_pawTap_0",
+        "dog_pawReach_0",
+        "dog_angry_0",
+        "dog_proud_0"
+      ],
+      "loop" : false
+    },
+    "trip" : {
+      "frameInterval" : 0.12,
+      "frames" : [
         "dog_trip_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "type": {
-      "frameInterval": 0.3,
-      "frames": [
+    "type" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "dog_type_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "walk": {
-      "frameInterval": 0.12,
-      "frames": [
+    "walk" : {
+      "frameInterval" : 0.12,
+      "frames" : [
         "dog_walk_0",
         "dog_walk_1",
         "dog_walk_2"
       ],
-      "loop": true
+      "loop" : true
     },
-    "wave": {
-      "frameInterval": 0.2,
-      "frames": [
+    "wave" : {
+      "frameInterval" : 0.20000000000000001,
+      "frames" : [
         "dog_wave_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "punch": {
-      "frameInterval": 0.14,
-      "frames": [
-        "dog_angry_0"
-      ],
-      "loop": false
-    },
-    "write": {
-      "frameInterval": 0.4,
-      "frames": [
+    "write" : {
+      "frameInterval" : 0.40000000000000002,
+      "frames" : [
         "dog_write_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "yawn": {
-      "frameInterval": 0.4,
-      "frames": [
+    "yawn" : {
+      "frameInterval" : 0.40000000000000002,
+      "frames" : [
         "dog_yawn_0"
       ],
-      "loop": false
+      "loop" : false
     }
   },
-  "version": "5.0.0",
-  "sounds": {
-    "react": "sounds/react.wav",
-    "walk": "sounds/walk.wav",
-    "run": "sounds/run.wav",
-    "eat": "sounds/eat.wav",
-    "drink": "sounds/drink.wav",
-    "sleep": "sounds/sleep.wav",
-    "yawn": "sounds/yawn.wav",
-    "sneeze": "sounds/sneeze.wav",
-    "celebrate": "sounds/celebrate.wav",
-    "sad": "sounds/sad.wav",
-    "scared": "sounds/scared.wav",
-    "angry": "sounds/angry.wav",
-    "scratch": "sounds/scratch.wav",
-    "play": "sounds/play.wav",
-    "love": "sounds/love.wav",
-    "chat": "sounds/chat.wav",
-    "alert": "sounds/alert.wav",
-    "cheer": "sounds/cheer.wav",
-    "confused": "sounds/confused.wav",
-    "shy": "sounds/shy.wav",
-    "type": "sounds/type.wav",
-    "write": "sounds/write.wav",
-    "read": "sounds/read.wav",
-    "phone": "sounds/phone.wav",
-    "gift": "sounds/gift.wav",
-    "bounce": "sounds/bounce.wav",
-    "sit": "sounds/sit.wav",
-    "land": "sounds/land.wav",
-    "spin": "sounds/spin.wav",
-    "dance": "sounds/dance.wav",
-    "roll": "sounds/roll.wav",
-    "trip": "sounds/trip.wav"
-  }
+  "version" : "5.0.0"
 }

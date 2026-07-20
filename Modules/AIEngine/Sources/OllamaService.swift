@@ -255,6 +255,8 @@ public actor OllamaService: AIEngineProtocol {
             }
 
             currentStatus = .ready
+        } catch is CancellationError {
+            currentStatus = .notConfigured
         } catch {
             currentStatus = .error(error.localizedDescription)
         }
@@ -275,8 +277,12 @@ public actor OllamaService: AIEngineProtocol {
 
             currentStatus = .ready
             return
+        } catch is CancellationError {
+            currentStatus = .notConfigured
+            return
         } catch {
             do {
+                try Task.checkCancellation()
                 var request = try Self.buildOpenAICompatibleChatRequest(
                     endpoint: endpoint,
                     model: resolvedModelName(),
@@ -297,6 +303,8 @@ public actor OllamaService: AIEngineProtocol {
                 }
 
                 currentStatus = .ready
+            } catch is CancellationError {
+                currentStatus = .notConfigured
             } catch {
                 currentStatus = .error(error.localizedDescription)
             }
@@ -304,6 +312,9 @@ public actor OllamaService: AIEngineProtocol {
     }
 
     public func send(message: String) async throws -> AsyncThrowingStream<String, Error> {
+        try Task.checkCancellation()
+        let requestSessionId = currentSessionId
+        let requestHistory = sessionHistories[requestSessionId] ?? []
         if case .ready = currentStatus {
             // no-op
         } else {
@@ -312,6 +323,7 @@ public actor OllamaService: AIEngineProtocol {
                 throw OllamaServiceError.serviceUnavailable
             }
         }
+        try Task.checkCancellation()
 
         let userMessage = ChatMessage(role: .user, content: message)
 
@@ -320,13 +332,13 @@ public actor OllamaService: AIEngineProtocol {
             let request = try Self.buildChatRequest(
                 endpoint: endpoint,
                 model: model,
-                history: activeHistory,
+                history: requestHistory,
                 systemPrompt: effectiveSystemPrompt,
                 userMessage: message
             )
 
             return AsyncThrowingStream<String, Error> { continuation in
-                Task {
+                let producer = Task {
                     do {
                         let stream = try await URLSession.shared.bytes(for: request)
                         let assistantMessage = try await self.consumeStream(
@@ -335,22 +347,27 @@ public actor OllamaService: AIEngineProtocol {
                             continuation: continuation,
                             onToolCall: nil
                         )
+                        try Task.checkCancellation()
 
                         self.recordConversation(
                             userMessage: userMessage,
-                            assistantMessage: assistantMessage
+                            assistantMessage: assistantMessage,
+                            sessionId: requestSessionId
                         )
                         continuation.finish()
                     } catch {
                         continuation.finish(throwing: error)
                     }
                 }
+                continuation.onTermination = { @Sendable _ in
+                    producer.cancel()
+                }
             }
         case .openAICompatible:
             var request = try Self.buildOpenAICompatibleChatRequest(
                 endpoint: endpoint,
                 model: resolvedModelName(),
-                history: activeHistory,
+                history: requestHistory,
                 systemPrompt: effectiveSystemPrompt,
                 userMessage: message,
                 stream: false
@@ -358,7 +375,7 @@ public actor OllamaService: AIEngineProtocol {
             applyOpenAIAuthorizationIfNeeded(to: &request)
 
             return AsyncThrowingStream<String, Error> { continuation in
-                Task {
+                let producer = Task {
                     do {
                         let (data, response) = try await URLSession.shared.data(for: request)
                         let assistantMessage = try await self.consumeOpenAIResponse(
@@ -367,15 +384,20 @@ public actor OllamaService: AIEngineProtocol {
                             continuation: continuation,
                             onToolCall: nil
                         )
+                        try Task.checkCancellation()
 
                         self.recordConversation(
                             userMessage: userMessage,
-                            assistantMessage: assistantMessage
+                            assistantMessage: assistantMessage,
+                            sessionId: requestSessionId
                         )
                         continuation.finish()
                     } catch {
                         continuation.finish(throwing: error)
                     }
+                }
+                continuation.onTermination = { @Sendable _ in
+                    producer.cancel()
                 }
             }
         }
@@ -386,6 +408,9 @@ public actor OllamaService: AIEngineProtocol {
         tools: [OllamaTool],
         onToolCall: @escaping @Sendable (PetToolCall) async -> String?
     ) async throws -> AsyncThrowingStream<String, Error> {
+        try Task.checkCancellation()
+        let requestSessionId = currentSessionId
+        let requestHistory = sessionHistories[requestSessionId] ?? []
         if case .ready = currentStatus {
             // no-op
         } else {
@@ -394,20 +419,22 @@ public actor OllamaService: AIEngineProtocol {
                 throw OllamaServiceError.serviceUnavailable
             }
         }
+        try Task.checkCancellation()
 
         let userMessage = ChatMessage(role: .user, content: message)
         let baseMessages = Self.buildRequestMessages(
-            history: activeHistory,
+            history: requestHistory,
             userMessage: message,
             systemPrompt: effectiveSystemPrompt
         )
 
         let localToolNames = Set(tools.map { $0.function.name })
-        let mcpBindings = await loadMCPToolBindings()
+        let mcpBindings = try await loadMCPToolBindings()
         let combinedTools = tools + mcpBindings.values.map { $0.descriptor.ollamaTool }
+        try Task.checkCancellation()
 
         return AsyncThrowingStream<String, Error> { continuation in
-            Task {
+            let producer = Task {
                 do {
                     let assistantMessage = try await self.runManagedToolLoop(
                         initialMessages: baseMessages,
@@ -416,19 +443,25 @@ public actor OllamaService: AIEngineProtocol {
                         mcpBindings: mcpBindings,
                         onToolCall: onToolCall
                     )
+                    try Task.checkCancellation()
 
                     if !assistantMessage.isEmpty {
                         continuation.yield(assistantMessage)
                     }
+                    try Task.checkCancellation()
 
                     self.recordConversation(
                         userMessage: userMessage,
-                        assistantMessage: assistantMessage
+                        assistantMessage: assistantMessage,
+                        sessionId: requestSessionId
                     )
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
                 }
+            }
+            continuation.onTermination = { @Sendable _ in
+                producer.cancel()
             }
         }
     }
@@ -445,7 +478,9 @@ public actor OllamaService: AIEngineProtocol {
         var lastToolResults: [String] = []
 
         for _ in 0..<Self.maxManagedToolRounds {
+            try Task.checkCancellation()
             let response = try await performSingleToolLoopRequest(messages: messages, tools: tools)
+            try Task.checkCancellation()
             let normalizedToolCalls = normalizeToolCallsForHistory(response.toolCalls)
 
             if !normalizedToolCalls.isEmpty {
@@ -467,12 +502,14 @@ public actor OllamaService: AIEngineProtocol {
 
                 var currentToolResults: [String] = []
                 for toolCall in normalizedToolCalls {
-                    let result = await executeManagedToolCall(
+                    try Task.checkCancellation()
+                    let result = try await executeManagedToolCall(
                         toolCall,
                         localToolNames: localToolNames,
                         mcpBindings: mcpBindings,
                         onToolCall: onToolCall
                     )
+                    try Task.checkCancellation()
                     currentToolResults.append(result)
                     messages.append(Self.toolResultMessage(for: toolCall, content: result, backend: backend))
                 }
@@ -576,16 +613,20 @@ public actor OllamaService: AIEngineProtocol {
         localToolNames: Set<String>,
         mcpBindings: [String: MCPToolBinding],
         onToolCall: @escaping @Sendable (PetToolCall) async -> String?
-    ) async -> String {
+    ) async throws -> String {
+        try Task.checkCancellation()
         if let binding = mcpBindings[toolCall.functionName] {
             do {
                 return try await binding.client.callExposedTool(toolCall.functionName, arguments: toolCall.arguments)
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 return Self.defaultFailedToolResult(toolCall.functionName, message: error.localizedDescription)
             }
         }
 
         let localResult = await onToolCall(toolCall)
+        try Task.checkCancellation()
         if localToolNames.contains(toolCall.functionName) {
             return localResult ?? Self.defaultSuccessfulToolResult(for: toolCall)
         }
@@ -609,16 +650,20 @@ public actor OllamaService: AIEngineProtocol {
         }
     }
 
-    private func loadMCPToolBindings() async -> [String: MCPToolBinding] {
+    private func loadMCPToolBindings() async throws -> [String: MCPToolBinding] {
         var bindings: [String: MCPToolBinding] = [:]
 
         for configuration in mcpServerConfigurations where configuration.enabled {
+            try Task.checkCancellation()
             let client = mcpClient(for: configuration)
             do {
                 let descriptors = try await client.listTools()
+                try Task.checkCancellation()
                 for descriptor in descriptors {
                     bindings[descriptor.exposedName] = MCPToolBinding(client: client, descriptor: descriptor)
                 }
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 // Ignore unavailable MCP servers for the current turn; local tools and
                 // plain chat should continue to work.
@@ -1150,20 +1195,24 @@ public actor OllamaService: AIEngineProtocol {
         return ""
     }
 
-    private func recordConversation(userMessage: ChatMessage, assistantMessage: String) {
-        var history = activeHistory
+    private func recordConversation(
+        userMessage: ChatMessage,
+        assistantMessage: String,
+        sessionId: String
+    ) {
+        var history = sessionHistories[sessionId] ?? []
         history.append(userMessage)
         history.append(ChatMessage(role: .assistant, content: assistantMessage))
 
         if history.count > 100 {
             history = Array(history.suffix(50))
         }
-        activeHistory = history
+        sessionHistories[sessionId] = history
 
         if let onConversationUpdated {
             Task {
-                await onConversationUpdated(userMessage.role.rawValue, userMessage.content, currentSessionId, nil, nil)
-                await onConversationUpdated("assistant", assistantMessage, currentSessionId, nil, nil)
+                await onConversationUpdated(userMessage.role.rawValue, userMessage.content, sessionId, nil, nil)
+                await onConversationUpdated("assistant", assistantMessage, sessionId, nil, nil)
             }
         }
     }

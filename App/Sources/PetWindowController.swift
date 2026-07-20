@@ -8,10 +8,6 @@ import QuartzCore
 
 @MainActor
 public final class PetWindowController: NSWindowController {
-    private final class TimerStepState: @unchecked Sendable {
-        var value = 0
-    }
-
     let petScene: PetScene
     let stateMachine: PetAnimationStateMachine
     let petID: UUID
@@ -28,6 +24,7 @@ public final class PetWindowController: NSWindowController {
     private var recentDragPositions: [(point: NSPoint, time: TimeInterval)] = []
     private var bubbleWindow: NSWindow?
     private var bubbleDismissWorkItem: DispatchWorkItem?
+    private var bubblePresentationGeneration: UInt = 0
     private var singleClickWorkItem: DispatchWorkItem?
     private var isDoubleClickPending = false
     private var behaviorEngine: BehaviorEngine!
@@ -35,6 +32,8 @@ public final class PetWindowController: NSWindowController {
     private var currentTrackingTarget: (@MainActor () -> NSPoint?)?
     private var debugMoveTimer: Timer?
     private var movementTimer: Timer?
+    private var wantsPetVisible = false
+    private var visibilityGeneration: UInt = 0
     private var otherPetPositionsProvider: (() -> [NSPoint])?
     private var desktopBehaviorActive = false
     private var animationStateSnapshot: AnimationState = .idle
@@ -85,17 +84,19 @@ public final class PetWindowController: NSWindowController {
 
     /// 播放动画并显示对应动作气泡（非 debug 用途）
     func playAnimationWithBubble(_ name: String) {
-        guard let state = AnimationState(rawValue: name) else { return }
+        guard wantsPetVisible else { return }
+        guard let state = ActionComboPlanner.playbackState(for: name) else { return }
         applyAnimation(state)
 
         // 50% 概率显示动作气泡（避免太频繁）
         if Double.random(in: 0...1) < 0.5,
-           let text = actionBubbleText(for: name) {
+           let text = actionBubbleText(for: state.rawValue) ?? actionBubbleText(for: name) {
             showBubble(text)
         }
     }
 
     func setDesktopBehavior(animation: String) {
+        guard wantsPetVisible else { return }
         // 取消正在执行的行为，桌面感知优先
         if isExecutingBehavior {
             behaviorEngine.cancelCurrentBehavior()
@@ -163,7 +164,7 @@ public final class PetWindowController: NSWindowController {
         afterDelay: TimeInterval = 0,
         activatesDesktopBehavior: Bool = false
     ) {
-        guard let targetState = AnimationState(rawValue: targetAnimation) else {
+        guard let targetState = ActionComboPlanner.playbackState(for: targetAnimation) else {
             return
         }
 
@@ -190,7 +191,7 @@ public final class PetWindowController: NSWindowController {
     }
 
     var isPetVisible: Bool {
-        window?.isVisible ?? false
+        wantsPetVisible
     }
 
     var currentPetSize: CGFloat {
@@ -269,7 +270,6 @@ public final class PetWindowController: NSWindowController {
 
         interactionView.controller = self
         interactionView.allowsTransparency = true
-        interactionView.preferredFramesPerSecond = 12
         interactionView.ignoresSiblingOrder = true
         interactionView.autoresizingMask = [.width, .height]
         interactionView.presentScene(scene)
@@ -283,7 +283,7 @@ public final class PetWindowController: NSWindowController {
             self?.setRotation(angle)
         }
         behaviorEngine.onAnimationChange = { [weak self] animationName in
-            guard let self, let state = AnimationState(rawValue: animationName) else {
+            guard let self, let state = ActionComboPlanner.playbackState(for: animationName) else {
                 return
             }
             self.applyAnimation(state, forceState: false)
@@ -299,6 +299,23 @@ public final class PetWindowController: NSWindowController {
     }
 
     func hidePet() {
+        wantsPetVisible = false
+        visibilityGeneration &+= 1
+        let generation = visibilityGeneration
+        behaviorEngine.cancelCurrentBehavior()
+        behaviorEngine.stopCursorTracking()
+        debugMoveTimer?.invalidate()
+        debugMoveTimer = nil
+        movementTimer?.invalidate()
+        movementTimer = nil
+        isExecutingBehavior = false
+        isThinking = false
+        bubbleDismissWorkItem?.cancel()
+        bubbleDismissWorkItem = nil
+        bubblePresentationGeneration &+= 1
+        bubbleWindow?.orderOut(nil)
+        petScene.setRenderingVisible(false)
+
         guard let window, window.isVisible else {
             return
         }
@@ -308,6 +325,9 @@ public final class PetWindowController: NSWindowController {
             window.animator().alphaValue = 0
         } completionHandler: {
             Task { @MainActor in
+                guard self.visibilityGeneration == generation, !self.wantsPetVisible else {
+                    return
+                }
                 window.orderOut(nil)
             }
         }
@@ -317,9 +337,13 @@ public final class PetWindowController: NSWindowController {
         guard let window else {
             return
         }
+        wantsPetVisible = true
+        visibilityGeneration &+= 1
 
         window.alphaValue = 0
         window.orderFrontRegardless()
+        petScene.setRenderingVisible(true)
+        applyAnimation(.idle, forceState: false)
 
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.18
@@ -366,6 +390,7 @@ public final class PetWindowController: NSWindowController {
         petScene.size = newSize
         petScene.petNode.position = CGPoint(x: size / 2, y: size / 2)
         updatePetScale(for: newSize)
+        petScene.refreshStaticFrame()
         repositionBubble()
 
         do {
@@ -388,7 +413,14 @@ public final class PetWindowController: NSWindowController {
             return
         }
 
-        isDoubleClickPending = false
+        let shouldStartDragAnimation = ClickGesturePlanner.shouldStartDragAnimation(clickCount: event.clickCount)
+        if shouldStartDragAnimation {
+            isDoubleClickPending = false
+        } else {
+            isDoubleClickPending = true
+            singleClickWorkItem?.cancel()
+            singleClickWorkItem = nil
+        }
         behaviorEngine.cancelCurrentBehavior()
         behaviorEngine.stopCursorTracking()
         isExecutingBehavior = false
@@ -396,6 +428,10 @@ public final class PetWindowController: NSWindowController {
         dragStartWindowOrigin = window.frame.origin
         hasDragged = false
         recentDragPositions = []
+
+        guard shouldStartDragAnimation else {
+            return
+        }
 
         Task {
             if let state = await stateMachine.handleTrigger(.custom("drag_start"), mood: await petMood.level) {
@@ -477,6 +513,7 @@ public final class PetWindowController: NSWindowController {
                 }
 
                 if event.clickCount == 2 {
+                    let interaction = self.doubleClickInteraction()
                     self.isDoubleClickPending = true
                     self.singleClickWorkItem?.cancel()
                     self.singleClickWorkItem = nil
@@ -488,8 +525,8 @@ public final class PetWindowController: NSWindowController {
                     Task {
                         await self.adjustMood(by: 10)
                         await MainActor.run {
-                            self.triggerCelebrate()
-                            self.showBubble(self.bubbleText(for: .doubleClick))
+                            self.triggerDoubleClickAction(interaction)
+                            self.showBubble(interaction.displayText)
                         }
                     }
                     return
@@ -547,7 +584,26 @@ public final class PetWindowController: NSWindowController {
         }
     }
 
+    private func doubleClickInteraction() -> InteractionTextAction {
+        InteractionTextActionResolver.resolveDoubleClickText(bubbleText(for: .doubleClick))
+    }
+
+    private func triggerDoubleClickAction(_ interaction: InteractionTextAction) {
+        let state = interaction.state
+        Task { await stateMachine.forceState(state) }
+
+        if ActionComboPlanner.plan(for: state) != nil {
+            executeActionCombo(state, count: interaction.count, forceState: false)
+        } else {
+            applyAnimation(state, forceState: false)
+        }
+        updatePetScale(for: petScene.size)
+    }
+
     func handleAnimationTrigger(_ trigger: AnimationTrigger) async {
+        guard wantsPetVisible else {
+            return
+        }
         // Don't process timer triggers while a behavior is executing
         if case .timer = trigger, isExecutingBehavior {
             return
@@ -661,7 +717,7 @@ public final class PetWindowController: NSWindowController {
     // MARK: - Debug
 
     func debugPlayAnimation(_ name: String) {
-        guard let state = AnimationState(rawValue: name) else { return }
+        guard let state = ActionComboPlanner.playbackState(for: name) else { return }
         behaviorEngine.cancelCurrentBehavior()
         behaviorEngine.stopCursorTracking()
         applyAnimation(state)
@@ -682,25 +738,27 @@ public final class PetWindowController: NSWindowController {
         let start = window.frame.origin
         let target = NSPoint(x: start.x + 150, y: start.y)
         let duration: TimeInterval = 2.0
-        let fps: TimeInterval = 60
-        let steps = Int(duration * fps)
-        let stepState = TimerStepState()
+        let fps = TimeInterval(PetScene.activeFramesPerSecond)
+        let startTime = CACurrentMediaTime()
 
-        debugMoveTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / fps, repeats: true) { [weak self] timer in
-            stepState.value += 1
-            let progress = Double(stepState.value) / Double(steps)
-            let x = start.x + (target.x - start.x) * progress
-            let y = start.y + (target.y - start.y) * progress
-            let shouldFinish = stepState.value >= steps
+        let timer = Timer(timeInterval: 1.0 / fps, repeats: true) { [weak self, weak window] timer in
+            let elapsed = CACurrentMediaTime() - startTime
+            let point = MotionFramePlanner.point(
+                from: start,
+                to: target,
+                elapsed: elapsed,
+                duration: duration
+            )
+            let shouldFinish = elapsed >= duration
             if shouldFinish {
                 timer.invalidate()
             }
-            Task { @MainActor [weak self] in
-                guard let self, let window = self.window else {
+            MainActor.assumeIsolated {
+                guard let self, let window else {
                     return
                 }
 
-                window.setFrameOrigin(shouldFinish ? target : NSPoint(x: x, y: y))
+                window.setFrameOrigin(shouldFinish ? target : point)
                 self.repositionBubble()
 
                 if shouldFinish {
@@ -708,6 +766,8 @@ public final class PetWindowController: NSWindowController {
                 }
             }
         }
+        debugMoveTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
         showBubble("🔬 moving →")
     }
 
@@ -722,7 +782,7 @@ public final class PetWindowController: NSWindowController {
         isExecutingBehavior = false
 
         if let animName = definition.animation,
-           let state = AnimationState(rawValue: animName) {
+           let state = ActionComboPlanner.playbackState(for: animName) {
             applyAnimation(state)
         }
 
@@ -753,29 +813,32 @@ public final class PetWindowController: NSWindowController {
 
         let prepDelay = PetScene.somersaultPrepDuration
         let rollDuration = Double(flips) * PetScene.somersaultPerFlipDuration
-        let fps: TimeInterval = 60
-        let steps = max(Int(rollDuration * fps), 1)
+        let fps = TimeInterval(PetScene.activeFramesPerSecond)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + prepDelay) { [weak self, weak window] in
             guard let self, let window else { return }
-            let stepState = TimerStepState()
+            let startTime = CACurrentMediaTime()
             let targetOrigin = NSPoint(x: targetX, y: startOrigin.y)
             self.movementTimer?.invalidate()
-            self.movementTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / fps, repeats: true) { [weak self, weak window] timer in
-                stepState.value += 1
-                let progress = min(1.0, Double(stepState.value) / Double(steps))
-                let x = startOrigin.x + actualDistance * CGFloat(progress)
-                let shouldFinish = progress >= 1.0
+            let timer = Timer(timeInterval: 1.0 / fps, repeats: true) { [weak self, weak window] timer in
+                let elapsed = CACurrentMediaTime() - startTime
+                let point = MotionFramePlanner.point(
+                    from: startOrigin,
+                    to: targetOrigin,
+                    elapsed: elapsed,
+                    duration: rollDuration
+                )
+                let shouldFinish = elapsed >= rollDuration
                 if shouldFinish {
                     timer.invalidate()
                 }
 
-                Task { @MainActor [weak self, weak window] in
+                MainActor.assumeIsolated {
                     guard let self, let window else {
                         return
                     }
 
-                    window.setFrameOrigin(shouldFinish ? targetOrigin : NSPoint(x: x, y: startOrigin.y))
+                    window.setFrameOrigin(shouldFinish ? targetOrigin : point)
                     self.repositionBubble()
 
                     if shouldFinish {
@@ -784,6 +847,8 @@ public final class PetWindowController: NSWindowController {
                     }
                 }
             }
+            self.movementTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
         }
     }
 
@@ -792,6 +857,9 @@ public final class PetWindowController: NSWindowController {
     }
 
     func closePet() {
+        wantsPetVisible = false
+        visibilityGeneration &+= 1
+        petScene.setRenderingVisible(false)
         behaviorEngine.cancelCurrentBehavior()
         behaviorEngine.stopCursorTracking()
         debugMoveTimer?.invalidate()
@@ -802,14 +870,17 @@ public final class PetWindowController: NSWindowController {
         singleClickWorkItem = nil
         bubbleDismissWorkItem?.cancel()
         bubbleDismissWorkItem = nil
+        bubblePresentationGeneration &+= 1
         bubbleWindow?.close()
+        bubbleWindow = nil
         close()
     }
 
     func showBubble(_ text: String, duration: TimeInterval = 2.0) {
         bubbleDismissWorkItem?.cancel()
+        bubbleDismissWorkItem = nil
 
-        guard let petWindow = window else {
+        guard wantsPetVisible, let petWindow = window else {
             return
         }
 
@@ -818,29 +889,38 @@ public final class PetWindowController: NSWindowController {
             return
         }
 
-        bubbleWindow?.orderOut(nil)
+        bubblePresentationGeneration &+= 1
+        let presentationGeneration = bubblePresentationGeneration
 
         let bubbleView = PetBubbleView(text: text)
         let fittingSize = bubbleView.fittingSize
         let bubbleFrame = NSRect(origin: .zero, size: fittingSize)
-        let window = NSWindow(
-            contentRect: bubbleFrame,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
+        let window: NSWindow
+        if let existingWindow = bubbleWindow {
+            existingWindow.orderOut(nil)
+            existingWindow.setContentSize(fittingSize)
+            window = existingWindow
+        } else {
+            let newWindow = NSWindow(
+                contentRect: bubbleFrame,
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+            newWindow.backgroundColor = .clear
+            newWindow.isOpaque = false
+            newWindow.hasShadow = false
+            newWindow.level = .floating
+            newWindow.ignoresMouseEvents = true
+            newWindow.isReleasedWhenClosed = false
+            bubbleWindow = newWindow
+            window = newWindow
+        }
 
-        window.backgroundColor = .clear
-        window.isOpaque = false
-        window.hasShadow = false
-        window.level = .floating
-        window.ignoresMouseEvents = true
-        window.isReleasedWhenClosed = false
         window.collectionBehavior = Self.collectionBehavior(for: configManager.config.spaceMode)
         bubbleView.frame = bubbleFrame
         bubbleView.autoresizingMask = [.width, .height]
         window.contentView = bubbleView
-        bubbleWindow = window
 
         positionBubble(window, above: petWindow)
         window.alphaValue = 0
@@ -862,10 +942,12 @@ public final class PetWindowController: NSWindowController {
                     window.animator().alphaValue = 0
                 } completionHandler: {
                     Task { @MainActor in
-                        window.orderOut(nil)
-                        if self.bubbleWindow === window {
-                            self.bubbleWindow = nil
+                        guard self.bubblePresentationGeneration == presentationGeneration,
+                              self.bubbleWindow === window else {
+                            return
                         }
+                        window.orderOut(nil)
+                        self.bubbleDismissWorkItem = nil
                     }
                 }
             }
@@ -897,24 +979,35 @@ public final class PetWindowController: NSWindowController {
         isThinking = false
         bubbleDismissWorkItem?.cancel()
         bubbleDismissWorkItem = nil
+        bubblePresentationGeneration &+= 1
+        let presentationGeneration = bubblePresentationGeneration
         if let bubbleWindow {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.15
                 bubbleWindow.animator().alphaValue = 0
             } completionHandler: { [weak self, weak bubbleWindow] in
                 Task { @MainActor in
-                    bubbleWindow?.orderOut(nil)
-                    if let self, self.bubbleWindow === bubbleWindow {
-                        self.bubbleWindow = nil
+                    guard let self,
+                          self.bubblePresentationGeneration == presentationGeneration,
+                          self.bubbleWindow === bubbleWindow else {
+                        return
                     }
+                    bubbleWindow?.orderOut(nil)
                 }
             }
         }
     }
 
     func executeAIAction(_ action: String, count: Int = 1) {
+        guard wantsPetVisible else { return }
         behaviorEngine.cancelCurrentBehavior()
         behaviorEngine.stopCursorTracking()
+
+        if let state = ActionComboPlanner.playbackState(for: action),
+           ActionComboPlanner.plan(for: state) != nil {
+            executeActionCombo(state, count: count)
+            return
+        }
 
         if action == AnimationState.somersault.rawValue {
             let flips = max(1, min(count, 8))
@@ -938,9 +1031,83 @@ public final class PetWindowController: NSWindowController {
             return
         }
 
-        if let state = AnimationState(rawValue: action) {
+        if let state = ActionComboPlanner.playbackState(for: action) {
             applyAnimation(state)
         }
+    }
+
+    private func executeActionCombo(_ state: AnimationState, count: Int, forceState: Bool = true) {
+        let flips = max(1, min(count, 8))
+        guard let plan = ActionComboPlanner.plan(for: state, count: flips) else {
+            applyAnimation(state)
+            return
+        }
+
+        animationLockUntil = Date().addingTimeInterval(plan.totalDuration + 0.2)
+        animationStateSnapshot = state
+        soundManager?.playSound(for: state.rawValue)
+        recordBehaviorChangeIfNeeded(for: state)
+        if forceState {
+            Task { await stateMachine.forceState(state) }
+        }
+
+        if state == .somersaultCombo {
+            startSomersaultRoll(flips: flips)
+        } else if plan.windowTravelPoints > 0 {
+            startComboTravel(points: plan.windowTravelPoints, duration: plan.totalDuration)
+        }
+        petScene.playActionCombo(for: state, count: flips)
+    }
+
+    private func startComboTravel(points: Double, duration: TimeInterval) {
+        guard let window else { return }
+        let facingSign: CGFloat = petScene.petNode.xScale < 0 ? -1 : 1
+        let startOrigin = window.frame.origin
+        var targetX = startOrigin.x + CGFloat(points) * facingSign
+        if let visible = (window.screen ?? NSScreen.main)?.visibleFrame {
+            let minX = visible.minX
+            let maxX = visible.maxX - window.frame.width
+            targetX = min(maxX, max(minX, targetX))
+        }
+
+        let targetOrigin = NSPoint(x: targetX, y: startOrigin.y)
+        guard abs(targetOrigin.x - startOrigin.x) > 0.5 else { return }
+
+        movementTimer?.invalidate()
+        movementTimer = nil
+
+        let travelDuration = max(duration * 0.75, 0.2)
+        let fps = TimeInterval(PetScene.activeFramesPerSecond)
+        let startTime = CACurrentMediaTime()
+        let timer = Timer(timeInterval: 1.0 / fps, repeats: true) { [weak self, weak window] timer in
+            let elapsed = CACurrentMediaTime() - startTime
+            let point = MotionFramePlanner.point(
+                from: startOrigin,
+                to: targetOrigin,
+                elapsed: elapsed,
+                duration: travelDuration
+            )
+            let shouldFinish = elapsed >= travelDuration
+            if shouldFinish {
+                timer.invalidate()
+            }
+
+            MainActor.assumeIsolated {
+                guard let self, let window else {
+                    return
+                }
+
+                window.setFrameOrigin(shouldFinish ? targetOrigin : point)
+                self.repositionBubble()
+
+                if shouldFinish {
+                    self.movementTimer = nil
+                    self.persistWindowPosition()
+                }
+            }
+        }
+        movementTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     private static func collectionBehavior(for spaceMode: String) -> NSWindow.CollectionBehavior {
@@ -958,7 +1125,7 @@ public final class PetWindowController: NSWindowController {
     }
 
     private func repositionBubble() {
-        guard let bubbleWindow, let petWindow = window else {
+        guard let bubbleWindow, bubbleWindow.isVisible, let petWindow = window else {
             return
         }
 
@@ -1027,6 +1194,10 @@ public final class PetWindowController: NSWindowController {
     }
 
     private func animationStateForBehavior(_ behaviorName: String) -> AnimationState? {
+        if let comboState = ActionComboPlanner.comboState(for: behaviorName) {
+            return comboState
+        }
+
         if let state = AnimationState(rawValue: behaviorName) {
             return state
         }
@@ -1083,26 +1254,28 @@ public final class PetWindowController: NSWindowController {
                 }
 
                 let start = window.frame.origin
-                let fps: TimeInterval = 60
-                let steps = max(Int(duration * fps), 1)
-                let stepState = TimerStepState()
+                let fps = TimeInterval(PetScene.activeFramesPerSecond)
+                let startTime = CACurrentMediaTime()
                 self.movementTimer?.invalidate()
-                self.movementTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / fps, repeats: true) { [weak self] timer in
-                    stepState.value += 1
-                    let progress = Double(stepState.value) / Double(steps)
-                    let x = start.x + (target.x - start.x) * progress
-                    let y = start.y + (target.y - start.y) * progress
-                    let shouldFinish = stepState.value >= steps
+                let timer = Timer(timeInterval: 1.0 / fps, repeats: true) { [weak self] timer in
+                    let elapsed = CACurrentMediaTime() - startTime
+                    let point = MotionFramePlanner.point(
+                        from: start,
+                        to: target,
+                        elapsed: elapsed,
+                        duration: duration
+                    )
+                    let shouldFinish = elapsed >= duration
                     if shouldFinish {
                         timer.invalidate()
                     }
 
-                    Task { @MainActor [weak self] in
+                    MainActor.assumeIsolated {
                         guard let self, let window = self.window else {
                             return
                         }
 
-                        window.setFrameOrigin(shouldFinish ? target : NSPoint(x: x, y: y))
+                        window.setFrameOrigin(shouldFinish ? target : point)
                         self.repositionBubble()
 
                         if shouldFinish {
@@ -1110,6 +1283,8 @@ public final class PetWindowController: NSWindowController {
                         }
                     }
                 }
+                self.movementTimer = timer
+                RunLoop.main.add(timer, forMode: .common)
             }
         }
         let onFlip: @Sendable (Bool) -> Void = { [weak self] faceLeft in
@@ -1165,7 +1340,7 @@ public final class PetWindowController: NSWindowController {
     }
 
     private func startCursorTrackingIfNeeded() {
-        guard !isExecutingBehavior else {
+        guard wantsPetVisible, !isExecutingBehavior else {
             return
         }
 
@@ -1201,14 +1376,20 @@ public final class PetWindowController: NSWindowController {
     }
 
     private func applyAnimation(_ state: AnimationState, forceState: Bool = true) {
-        animationStateSnapshot = state
-        soundManager?.playSound(for: state.rawValue)
-        petScene.playAnimation(for: state)
-        recordBehaviorChangeIfNeeded(for: state)
+        let playbackState = ActionComboPlanner.comboState(for: state) ?? state
+        if ActionComboPlanner.plan(for: playbackState) != nil {
+            executeActionCombo(playbackState, count: 1, forceState: forceState)
+            return
+        }
+
+        animationStateSnapshot = playbackState
+        soundManager?.playSound(for: playbackState.rawValue)
+        petScene.playAnimation(for: playbackState)
+        recordBehaviorChangeIfNeeded(for: playbackState)
         guard forceState else {
             return
         }
-        Task { await stateMachine.forceState(state) }
+        Task { await stateMachine.forceState(playbackState) }
     }
 
     private func recordBehaviorChangeIfNeeded(for state: AnimationState) {
@@ -1303,7 +1484,7 @@ public final class PetWindowController: NSWindowController {
     }
 
     private func handleMoodAdjustmentForState(_ state: AnimationState) async {
-        guard state == .celebrate else {
+        guard state == .celebrate || state == .joySpinCombo else {
             return
         }
 

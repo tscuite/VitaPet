@@ -416,21 +416,31 @@ actor MCPClient {
         let requestID = nextRequestID
         nextRequestID += 1
 
-        return try await withCheckedThrowingContinuation { continuation in
-            pendingRequests[requestID] = continuation
-
-            do {
-                try sendEncodable(
-                    OutgoingRequest(id: requestID, method: method, params: params)
-                )
-
-                Task { [self] in
-                    try? await Task.sleep(for: Self.requestTimeout)
-                    timeoutRequest(id: requestID, method: method)
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
                 }
-            } catch {
-                pendingRequests.removeValue(forKey: requestID)
-                continuation.resume(throwing: error)
+                pendingRequests[requestID] = continuation
+
+                do {
+                    try sendEncodable(
+                        OutgoingRequest(id: requestID, method: method, params: params)
+                    )
+
+                    Task { [self] in
+                        try? await Task.sleep(for: Self.requestTimeout)
+                        timeoutRequest(id: requestID, method: method)
+                    }
+                } catch {
+                    pendingRequests.removeValue(forKey: requestID)
+                    continuation.resume(throwing: error)
+                }
+            }
+        } onCancel: {
+            Task { [self] in
+                await cancelRequest(id: requestID)
             }
         }
     }
@@ -619,6 +629,13 @@ actor MCPClient {
             return
         }
         continuation.resume(throwing: MCPClientError.requestTimedOut(method))
+    }
+
+    private func cancelRequest(id: Int) {
+        guard let continuation = pendingRequests.removeValue(forKey: id) else {
+            return
+        }
+        continuation.resume(throwing: CancellationError())
     }
 
     private func handleStreamTermination(error: Error?) {

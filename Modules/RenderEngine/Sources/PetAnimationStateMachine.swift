@@ -138,8 +138,11 @@ public actor PetAnimationStateMachine {
         case "dragend", "drag_end":
             return currentState == .drag ? .idle : nil
         case "celebrate":
-            return .celebrate
+            return ActionComboPlanner.comboState(for: .celebrate) ?? .celebrate
         default:
+            if let comboState = ActionComboPlanner.comboState(for: normalizedValue) {
+                return comboState
+            }
             return AnimationState.allCases.first { $0.rawValue.lowercased() == normalizedValue }
         }
     }

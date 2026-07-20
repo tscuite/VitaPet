@@ -46,6 +46,49 @@ final class SpritePackLoaderTests: XCTestCase {
         XCTAssertEqual(try stateAnimation(named: .celebrate, in: manifest).frames.count, 3)
     }
 
+    func testDefaultManifestContainsExpandedActionStates() throws {
+        let manifest = SpritePackLoader.defaultManifest()
+        let newStates: [AnimationState] = [
+            .blink,
+            .sniff,
+            .tailWag,
+            .pawTap,
+            .pounce,
+            .crouch,
+            .crawl,
+            .nap,
+            .dream,
+            .beg,
+            .nuzzle,
+            .surprised,
+            .blush,
+            .proud,
+            .melt,
+            .sing,
+            .meditate,
+            .coffee,
+            .snack,
+            .stargaze,
+            .sparkle,
+            .slide,
+            .pawReach,
+            .guardDuty,
+            .danceCombo,
+            .somersaultCombo,
+            .boxingCombo,
+            .parkourCombo,
+            .partyCombo,
+            .trainingCombo,
+            .joySpinCombo
+        ]
+
+        for state in newStates {
+            let animation = try stateAnimation(named: state, in: manifest)
+            XCTAssertFalse(animation.frames.isEmpty, "Expected frames for \(state.rawValue)")
+            XCTAssertGreaterThan(animation.frameInterval, 0, "Expected positive frame interval for \(state.rawValue)")
+        }
+    }
+
     func testLoadManifestFromDirectoryLoadsValidManifest() throws {
         let tempDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

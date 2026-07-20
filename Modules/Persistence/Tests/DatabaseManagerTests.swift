@@ -249,18 +249,20 @@ final class DatabaseManagerTests: XCTestCase {
         XCTAssertEqual(turns[0].content, "keep")
     }
 
-    func testDeleteOldTurns_keepsSpecifiedCount() async throws {
+    func testArchivingKeepsNewestTurnsForTheSession() async throws {
         try await manager.initialize()
 
         try await manager.insertConversationTurn(role: "user", content: "one", sessionId: "default")
         try await manager.insertConversationTurn(role: "assistant", content: "two", sessionId: "default")
         try await manager.insertConversationTurn(role: "user", content: "three", sessionId: "default")
 
-        try await manager.deleteOldTurns(keepLast: 2)
+        let result = try await manager.archiveEligibleConversationTurns(hotLimit: 2, chunkSize: 1)
         let turns = try await manager.fetchRecentTurns(limit: 50)
 
+        XCTAssertEqual(result.archivedTurnCount, 1)
         XCTAssertEqual(turns.count, 2)
         XCTAssertEqual(turns.map(\.content), ["two", "three"])
+        XCTAssertEqual(try await manager.listConversationArchives().count, 1)
     }
 
     func testClearConversation_removesAllTurns() async throws {

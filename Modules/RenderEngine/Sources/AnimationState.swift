@@ -48,4 +48,35 @@ public enum AnimationState: String, Sendable, CaseIterable {
     case type
     case punch
     case somersault
+    case blink
+    case sniff
+    case tailWag
+    case pawTap
+    case pounce
+    case crouch
+    case crawl
+    case nap
+    case dream
+    case beg
+    case nuzzle
+    case surprised
+    case blush
+    case proud
+    case melt
+    case sing
+    case meditate
+    case coffee
+    case snack
+    case stargaze
+    case sparkle
+    case slide
+    case pawReach
+    case guardDuty = "guard"
+    case danceCombo
+    case somersaultCombo
+    case boxingCombo
+    case parkourCombo
+    case partyCombo
+    case trainingCombo
+    case joySpinCombo
 }

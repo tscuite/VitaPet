@@ -114,14 +114,34 @@ final class PetAnimationStateMachineTests: XCTestCase {
         XCTAssertEqual(currentState, .idle)
     }
 
-    func testCustomCelebrateTransitionsToCelebrate() async {
+    func testCustomCelebrateTransitionsToJoySpinCombo() async {
         let machine = PetAnimationStateMachine(initialState: .idle)
 
         let nextState = await machine.handleTrigger(.custom("celebrate"))
 
-        XCTAssertEqual(nextState, .celebrate)
+        XCTAssertEqual(nextState, .joySpinCombo)
         let currentState = await machine.currentState
-        XCTAssertEqual(currentState, .celebrate)
+        XCTAssertEqual(currentState, .joySpinCombo)
+    }
+
+    func testCustomDanceAliasTransitionsToDanceCombo() async {
+        let machine = PetAnimationStateMachine(initialState: .idle)
+
+        let nextState = await machine.handleTrigger(.custom("dance"))
+
+        XCTAssertEqual(nextState, .danceCombo)
+        let currentState = await machine.currentState
+        XCTAssertEqual(currentState, .danceCombo)
+    }
+
+    func testCustomChineseBoxingAliasTransitionsToBoxingCombo() async {
+        let machine = PetAnimationStateMachine(initialState: .idle)
+
+        let nextState = await machine.handleTrigger(.custom("打拳"))
+
+        XCTAssertEqual(nextState, .boxingCombo)
+        let currentState = await machine.currentState
+        XCTAssertEqual(currentState, .boxingCombo)
     }
 
     func testCustomUnknownReturnsNil() async {

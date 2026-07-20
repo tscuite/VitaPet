@@ -1,549 +1,1023 @@
 {
-  "language": {
-    "alert": [
+  "language" : {
+    "alert" : [
       "！注意！",
       "有情况！"
     ],
-    "angry": [
+    "angry" : [
       "哼！",
       "生气了！",
       "别烦我！"
     ],
-    "bounce": [
+    "beg" : [
+      "可以陪我玩吗？",
+      "求关注~"
+    ],
+    "blink" : [
+      "眨眨眼~",
+      "看到你啦。"
+    ],
+    "blush" : [
+      "有点害羞。",
+      "嘿嘿。"
+    ],
+    "bounce" : [
       "蹦蹦跳~",
       "弹起来！"
     ],
-    "bubbleTexts": [
+    "boxingCombo" : [
+      "拳击连招！",
+      "防守、试探、出拳。"
+    ],
+    "bubbleTexts" : [
       "嗨！",
       "别戳我啦~",
       "喵~",
       "有什么事吗？"
     ],
-    "celebrate": [
+    "celebrate" : [
       "耶！🎉",
       "太棒了！",
       "开心！"
     ],
-    "chat": [
+    "chat" : [
       "喵喵~",
       "然后呢？",
       "原来如此~"
     ],
-    "climb": [
+    "climb" : [
       "爬上去！",
       "好高~"
     ],
-    "confused": [
+    "coffee" : [
+      "补充能量。",
+      "喝一口。"
+    ],
+    "confused" : [
       "？？？",
       "什么情况？",
       "看不懂..."
     ],
-    "dance": [
+    "crawl" : [
+      "慢慢爬行。",
+      "低调靠近。"
+    ],
+    "crouch" : [
+      "悄悄蹲下。",
+      "准备出发。"
+    ],
+    "dance" : [
       "跳舞~♪",
       "嗨起来！",
       "♪♪♪"
     ],
-    "doubleClickTexts": [
+    "danceCombo" : [
+      "来一段连舞！",
+      "转身、滑步、闪亮收尾。"
+    ],
+    "doubleClickTexts" : [
       "太开心啦！",
       "好喜欢你！",
       "嘻嘻~",
       "开心到转圈圈~"
     ],
-    "drink": [
+    "dream" : [
+      "做了个甜梦。",
+      "梦里也在陪你。"
+    ],
+    "drink" : [
       "咕噜咕噜~",
       "好渴~"
     ],
-    "eat": [
+    "eat" : [
       "好吃！",
       "还要还要！",
       "鱼呢？",
       "吃饱啦~"
     ],
-    "gift": [
+    "gift" : [
       "送你~🎁",
       "收下吧！"
     ],
-    "groom": [
+    "groom" : [
       "舔舔~",
       "要干干净净的~",
       "洗脸脸~"
     ],
-    "headShake": [
+    "guard" : [
+      "我来守着。",
+      "保持警戒。"
+    ],
+    "headShake" : [
       "不要！",
       "才不呢~"
     ],
-    "idle": [
+    "idle" : [
       "喵~",
       "...",
       "好无聊...",
       "发呆中~"
     ],
-    "lookAround": [
+    "joySpinCombo" : [
+      "开心到转圈圈！",
+      "转一圈，闪一下。"
+    ],
+    "lookAround" : [
       "看看~",
       "这边有什么？"
     ],
-    "love": [
+    "love" : [
       "❤️",
       "好喜欢~",
       "比心~"
     ],
-    "nod": [
+    "meditate" : [
+      "安静一下。",
+      "保持平衡。"
+    ],
+    "melt" : [
+      "软掉了。",
+      "需要一点安慰。"
+    ],
+    "nap" : [
+      "小睡一下。",
+      "呼噜呼噜。"
+    ],
+    "nod" : [
       "嗯嗯！",
       "同意！"
     ],
-    "peek": [
+    "nuzzle" : [
+      "蹭蹭你。",
+      "贴贴。"
+    ],
+    "parkourCombo" : [
+      "跑酷连招！",
+      "扑跃、滑步、翻滚一气呵成。"
+    ],
+    "partyCombo" : [
+      "派对表演时间！",
+      "唱歌跳舞再闪一下。"
+    ],
+    "pawReach" : [
+      "伸爪爪。",
+      "够一下。"
+    ],
+    "pawTap" : [
+      "拍拍你。",
+      "注意到我了吗？"
+    ],
+    "peek" : [
       "偷看一下~",
       "嘿嘿~"
     ],
-    "phone": [
+    "phone" : [
       "谁的消息？",
       "刷刷手机~"
     ],
-    "punch": [
-      "嘿！",
-      "吃我一拳！",
-      "收招！"
-    ],
-    "play": [
+    "play" : [
       "好好玩！",
       "再来一次！",
       "嘿嘿~"
     ],
-    "react": [
+    "pounce" : [
+      "扑过去！",
+      "抓到啦！"
+    ],
+    "proud" : [
+      "我很厉害吧。",
+      "挺胸！"
+    ],
+    "punch" : [
+      "嘿！",
+      "吃我一拳！",
+      "收招！"
+    ],
+    "react" : [
       "！",
       "什么！",
       "嗯？"
     ],
-    "read": [
+    "read" : [
       "好有趣~",
       "看书中~"
     ],
-    "roll": [
+    "roll" : [
       "滚来滚去~",
       "咕噜~"
     ],
-    "run": [
+    "run" : [
       "冲啊！",
       "追不上我~",
       "跑起来！"
     ],
-    "sad": [
+    "sad" : [
       "呜呜...",
       "不开心...",
       "谁来陪陪我..."
     ],
-    "scared": [
+    "scared" : [
       "好可怕！",
       "救命！",
       "怕怕..."
     ],
-    "scratch": [
+    "scratch" : [
       "痒痒~",
       "挠挠~"
     ],
-    "shy": [
+    "shy" : [
       "害羞...",
       "别看我..."
     ],
-    "sit": [
+    "sing" : [
+      "啦啦啦~",
+      "唱给你听。"
+    ],
+    "sit" : [
       "坐坐~",
       "休息一下~"
     ],
-    "sleep": [
+    "sleep" : [
       "💤",
       "好困...",
       "zzZ~",
       "别吵..."
     ],
-    "sneeze": [
+    "slide" : [
+      "滑过去。",
+      "咻~"
+    ],
+    "snack" : [
+      "吃点小零食。",
+      "好吃！"
+    ],
+    "sneeze" : [
       "阿嚏！",
       "哈啾~"
     ],
-    "spin": [
-      "转圈圈~",
-      "好晕~"
+    "sniff" : [
+      "闻闻看~",
+      "这里有新味道。"
     ],
-    "somersault": [
+    "somersault" : [
       "看好了！",
       "翻给你看！",
       "哼！认真起来了！"
     ],
-    "stretch": [
+    "somersaultCombo" : [
+      "翻跟头连招启动！",
+      "落地接一记帅气收势。"
+    ],
+    "sparkle" : [
+      "闪亮登场！",
+      "发光中。"
+    ],
+    "spin" : [
+      "转圈圈~",
+      "好晕~"
+    ],
+    "stargaze" : [
+      "看看星星。",
+      "今天也很亮。"
+    ],
+    "stretch" : [
       "伸懒腰~",
       "好舒服~"
     ],
-    "think": [
+    "surprised" : [
+      "哇！",
+      "发生什么啦？"
+    ],
+    "tailWag" : [
+      "开心摇摇！",
+      "尾巴停不下来。"
+    ],
+    "think" : [
       "嗯...",
       "让我想想...",
       "思考中..."
     ],
-    "trip": [
+    "trainingCombo" : [
+      "训练连招！",
+      "热身、扑跃、出拳、得意收尾。"
+    ],
+    "trip" : [
       "哎呀！",
       "摔了..."
     ],
-    "type": [
+    "type" : [
       "噼里啪啦~",
       "打字中..."
     ],
-    "walk": [
+    "walk" : [
       "散步去~",
       "走走走~",
       "这边看看~"
     ],
-    "wave": [
+    "wave" : [
       "嗨！你好~",
       "拜拜~"
     ],
-    "write": [
+    "write" : [
       "写写写~",
       "灵感来了！"
     ],
-    "yawn": [
+    "yawn" : [
       "哈欠~",
       "好困呀~"
     ]
   },
-  "name": "DefaultCat",
-  "states": {
-    "alert": {
-      "frameInterval": 0.2,
-      "frames": [
+  "name" : "DefaultCat",
+  "states" : {
+    "alert" : {
+      "frameInterval" : 0.20000000000000001,
+      "frames" : [
         "pet_alert_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "angry": {
-      "frameInterval": 0.3,
-      "frames": [
+    "angry" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "pet_angry_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "bounce": {
-      "frameInterval": 0.12,
-      "frames": [
+    "beg" : {
+      "frameInterval" : 0.14000000000000001,
+      "frames" : [
+        "pet_beg_0",
+        "pet_beg_1",
+        "pet_beg_2",
+        "pet_beg_3"
+      ],
+      "loop" : false
+    },
+    "blink" : {
+      "frameInterval" : 0.089999999999999997,
+      "frames" : [
+        "pet_blink_0",
+        "pet_blink_1",
+        "pet_blink_2",
+        "pet_blink_3"
+      ],
+      "loop" : false
+    },
+    "blush" : {
+      "frameInterval" : 0.17999999999999999,
+      "frames" : [
+        "pet_blush_0",
+        "pet_blush_1",
+        "pet_blush_2",
+        "pet_blush_3"
+      ],
+      "loop" : false
+    },
+    "bounce" : {
+      "frameInterval" : 0.12,
+      "frames" : [
         "pet_bounce_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "celebrate": {
-      "frameInterval": 0.12,
-      "frames": [
+    "boxingCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "pet_guard_0",
+        "pet_guard_2",
+        "pet_pawTap_0",
+        "pet_pawReach_0",
+        "pet_angry_0",
+        "pet_pawReach_2",
+        "pet_proud_0"
+      ],
+      "loop" : false
+    },
+    "celebrate" : {
+      "frameInterval" : 0.12,
+      "frames" : [
         "pet_celebrate_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "chat": {
-      "frameInterval": 0.3,
-      "frames": [
+    "chat" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "pet_chat_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "cheer": {
-      "frameInterval": 0.15,
-      "frames": [
+    "cheer" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "pet_cheer_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "climb": {
-      "frameInterval": 0.2,
-      "frames": [
+    "climb" : {
+      "frameInterval" : 0.20000000000000001,
+      "frames" : [
         "pet_climb_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "confused": {
-      "frameInterval": 0.3,
-      "frames": [
+    "coffee" : {
+      "frameInterval" : 0.22,
+      "frames" : [
+        "pet_coffee_0",
+        "pet_coffee_1",
+        "pet_coffee_2",
+        "pet_coffee_3"
+      ],
+      "loop" : false
+    },
+    "confused" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "pet_confused_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "dance": {
-      "frameInterval": 0.15,
-      "frames": [
+    "crawl" : {
+      "frameInterval" : 0.12,
+      "frames" : [
+        "pet_crawl_0",
+        "pet_crawl_1",
+        "pet_crawl_2",
+        "pet_crawl_3"
+      ],
+      "loop" : false
+    },
+    "crouch" : {
+      "frameInterval" : 0.14000000000000001,
+      "frames" : [
+        "pet_crouch_0",
+        "pet_crouch_1",
+        "pet_crouch_2"
+      ],
+      "loop" : false
+    },
+    "dance" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "pet_dance_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "drag": {
-      "frameInterval": 0.25,
-      "frames": [
+    "danceCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "pet_dance_0",
+        "pet_slide_0",
+        "pet_slide_1",
+        "pet_spin_0",
+        "pet_tailWag_0",
+        "pet_tailWag_2",
+        "pet_sparkle_0",
+        "pet_sparkle_3",
+        "pet_proud_0"
+      ],
+      "loop" : false
+    },
+    "drag" : {
+      "frameInterval" : 0.25,
+      "frames" : [
         "pet_drag_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "drink": {
-      "frameInterval": 0.35,
-      "frames": [
+    "dream" : {
+      "frameInterval" : 0.32000000000000001,
+      "frames" : [
+        "pet_dream_0",
+        "pet_dream_1",
+        "pet_dream_2",
+        "pet_dream_3"
+      ],
+      "loop" : false
+    },
+    "drink" : {
+      "frameInterval" : 0.34999999999999998,
+      "frames" : [
         "pet_drink_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "eat": {
-      "frameInterval": 0.35,
-      "frames": [
+    "eat" : {
+      "frameInterval" : 0.34999999999999998,
+      "frames" : [
         "pet_eat_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "follow": {
-      "frameInterval": 0.08,
-      "frames": [
+    "follow" : {
+      "frameInterval" : 0.080000000000000002,
+      "frames" : [
         "pet_follow_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "gift": {
-      "frameInterval": 0.4,
-      "frames": [
+    "gift" : {
+      "frameInterval" : 0.40000000000000002,
+      "frames" : [
         "pet_gift_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "groom": {
-      "frameInterval": 0.4,
-      "frames": [
+    "groom" : {
+      "frameInterval" : 0.40000000000000002,
+      "frames" : [
         "pet_groom_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "headShake": {
-      "frameInterval": 0.2,
-      "frames": [
+    "guard" : {
+      "frameInterval" : 0.22,
+      "frames" : [
+        "pet_guard_0",
+        "pet_guard_1",
+        "pet_guard_2",
+        "pet_guard_3"
+      ],
+      "loop" : true
+    },
+    "headShake" : {
+      "frameInterval" : 0.20000000000000001,
+      "frames" : [
         "pet_headShake_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "hidePeek": {
-      "frameInterval": 0.3,
-      "frames": [
+    "hidePeek" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "pet_hidePeek_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "idle": {
-      "frameInterval": 0.5,
-      "frames": [
+    "idle" : {
+      "frameInterval" : 0.5,
+      "frames" : [
         "pet_idle_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "land": {
-      "frameInterval": 0.1,
-      "frames": [
+    "joySpinCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "pet_celebrate_0",
+        "pet_spin_0",
+        "pet_sparkle_0",
+        "pet_sparkle_2",
+        "pet_tailWag_0",
+        "pet_tailWag_3",
+        "pet_proud_0"
+      ],
+      "loop" : false
+    },
+    "land" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
         "pet_land_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "listen": {
-      "frameInterval": 0.2,
-      "frames": [
+    "listen" : {
+      "frameInterval" : 0.20000000000000001,
+      "frames" : [
         "pet_listen_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "love": {
-      "frameInterval": 0.3,
-      "frames": [
+    "lookAround" : {
+      "frameInterval" : 0.34999999999999998,
+      "frames" : [
+        "pet_walk_0",
+        "pet_walk_1"
+      ],
+      "loop" : false
+    },
+    "love" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "pet_love_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "nod": {
-      "frameInterval": 0.2,
-      "frames": [
+    "meditate" : {
+      "frameInterval" : 0.41999999999999998,
+      "frames" : [
+        "pet_meditate_0",
+        "pet_meditate_1",
+        "pet_meditate_2",
+        "pet_meditate_3"
+      ],
+      "loop" : true
+    },
+    "melt" : {
+      "frameInterval" : 0.17999999999999999,
+      "frames" : [
+        "pet_melt_0",
+        "pet_melt_1",
+        "pet_melt_2",
+        "pet_melt_3"
+      ],
+      "loop" : false
+    },
+    "nap" : {
+      "frameInterval" : 0.55000000000000004,
+      "frames" : [
+        "pet_nap_0",
+        "pet_nap_1",
+        "pet_nap_2",
+        "pet_nap_3"
+      ],
+      "loop" : true
+    },
+    "nod" : {
+      "frameInterval" : 0.20000000000000001,
+      "frames" : [
         "pet_nod_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "peek": {
-      "frameInterval": 0.3,
-      "frames": [
+    "nuzzle" : {
+      "frameInterval" : 0.14000000000000001,
+      "frames" : [
+        "pet_nuzzle_0",
+        "pet_nuzzle_1",
+        "pet_nuzzle_2",
+        "pet_nuzzle_3"
+      ],
+      "loop" : false
+    },
+    "parkourCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "pet_pounce_0",
+        "pet_pounce_2",
+        "pet_slide_0",
+        "pet_slide_2",
+        "pet_roll_0",
+        "pet_spin_0",
+        "pet_land_0",
+        "pet_cheer_0"
+      ],
+      "loop" : false
+    },
+    "partyCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "pet_sing_0",
+        "pet_sing_3",
+        "pet_dance_0",
+        "pet_sparkle_0",
+        "pet_sparkle_3",
+        "pet_cheer_0",
+        "pet_tailWag_0",
+        "pet_tailWag_3",
+        "pet_blush_0"
+      ],
+      "loop" : false
+    },
+    "pawReach" : {
+      "frameInterval" : 0.12,
+      "frames" : [
+        "pet_pawReach_0",
+        "pet_pawReach_1",
+        "pet_pawReach_2",
+        "pet_pawReach_3"
+      ],
+      "loop" : false
+    },
+    "pawTap" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "pet_pawTap_0",
+        "pet_pawTap_1",
+        "pet_pawTap_2",
+        "pet_pawTap_3"
+      ],
+      "loop" : false
+    },
+    "peek" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "pet_peek_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "phone": {
-      "frameInterval": 0.4,
-      "frames": [
+    "phone" : {
+      "frameInterval" : 0.40000000000000002,
+      "frames" : [
         "pet_phone_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "pickup": {
-      "frameInterval": 0.25,
-      "frames": [
+    "pickup" : {
+      "frameInterval" : 0.25,
+      "frames" : [
         "pet_pickup_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "play": {
-      "frameInterval": 0.15,
-      "frames": [
+    "play" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "pet_play_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "react": {
-      "frameInterval": 0.15,
-      "frames": [
+    "pounce" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "pet_pounce_0",
+        "pet_pounce_1",
+        "pet_pounce_2",
+        "pet_pounce_3"
+      ],
+      "loop" : false
+    },
+    "proud" : {
+      "frameInterval" : 0.16,
+      "frames" : [
+        "pet_proud_0",
+        "pet_proud_1",
+        "pet_proud_2",
+        "pet_proud_3"
+      ],
+      "loop" : false
+    },
+    "punch" : {
+      "frameInterval" : 0.14000000000000001,
+      "frames" : [
+        "pet_angry_0"
+      ],
+      "loop" : false
+    },
+    "react" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "pet_react_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "read": {
-      "frameInterval": 0.4,
-      "frames": [
+    "read" : {
+      "frameInterval" : 0.40000000000000002,
+      "frames" : [
         "pet_read_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "roll": {
-      "frameInterval": 0.12,
-      "frames": [
+    "roll" : {
+      "frameInterval" : 0.12,
+      "frames" : [
         "pet_roll_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "run": {
-      "frameInterval": 0.08,
-      "frames": [
+    "run" : {
+      "frameInterval" : 0.080000000000000002,
+      "frames" : [
         "pet_run_0",
         "pet_run_1"
       ],
-      "loop": true
+      "loop" : true
     },
-    "sad": {
-      "frameInterval": 0.5,
-      "frames": [
+    "sad" : {
+      "frameInterval" : 0.5,
+      "frames" : [
         "pet_sad_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "scared": {
-      "frameInterval": 0.15,
-      "frames": [
+    "scared" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "pet_scared_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "scratch": {
-      "frameInterval": 0.15,
-      "frames": [
+    "scratch" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "pet_scratch_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "shy": {
-      "frameInterval": 0.3,
-      "frames": [
+    "shy" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "pet_shy_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "sit": {
-      "frameInterval": 0.6,
-      "frames": [
+    "sing" : {
+      "frameInterval" : 0.13,
+      "frames" : [
+        "pet_sing_0",
+        "pet_sing_1",
+        "pet_sing_2",
+        "pet_sing_3",
+        "pet_sing_4"
+      ],
+      "loop" : false
+    },
+    "sit" : {
+      "frameInterval" : 0.59999999999999998,
+      "frames" : [
         "pet_sit_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "sleep": {
-      "frameInterval": 0.8,
-      "frames": [
+    "sleep" : {
+      "frameInterval" : 0.80000000000000004,
+      "frames" : [
         "pet_sleep_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "sneeze": {
-      "frameInterval": 0.15,
-      "frames": [
+    "slide" : {
+      "frameInterval" : 0.089999999999999997,
+      "frames" : [
+        "pet_slide_0",
+        "pet_slide_1",
+        "pet_slide_2",
+        "pet_slide_3"
+      ],
+      "loop" : false
+    },
+    "snack" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
+        "pet_snack_0",
+        "pet_snack_1",
+        "pet_snack_2",
+        "pet_snack_3"
+      ],
+      "loop" : false
+    },
+    "sneeze" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "pet_sneeze_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "spin": {
-      "frameInterval": 0.12,
-      "frames": [
+    "sniff" : {
+      "frameInterval" : 0.14000000000000001,
+      "frames" : [
+        "pet_sniff_0",
+        "pet_sniff_1",
+        "pet_sniff_2",
+        "pet_sniff_3"
+      ],
+      "loop" : false
+    },
+    "somersault" : {
+      "frameInterval" : 0.089999999999999997,
+      "frames" : [
+        "pet_somersault_0",
+        "pet_somersault_1",
+        "pet_somersault_2",
+        "pet_somersault_3"
+      ],
+      "loop" : false
+    },
+    "somersaultCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "pet_crouch_0",
+        "pet_somersault_0",
+        "pet_somersault_1",
+        "pet_somersault_2",
+        "pet_somersault_3",
+        "pet_pawReach_0",
+        "pet_sparkle_0",
+        "pet_sparkle_3"
+      ],
+      "loop" : false
+    },
+    "sparkle" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "pet_sparkle_0",
+        "pet_sparkle_1",
+        "pet_sparkle_2",
+        "pet_sparkle_3",
+        "pet_sparkle_4"
+      ],
+      "loop" : false
+    },
+    "spin" : {
+      "frameInterval" : 0.12,
+      "frames" : [
         "pet_spin_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "stretch": {
-      "frameInterval": 0.35,
-      "frames": [
+    "stargaze" : {
+      "frameInterval" : 0.28000000000000003,
+      "frames" : [
+        "pet_stargaze_0",
+        "pet_stargaze_1",
+        "pet_stargaze_2",
+        "pet_stargaze_3"
+      ],
+      "loop" : false
+    },
+    "stretch" : {
+      "frameInterval" : 0.34999999999999998,
+      "frames" : [
         "pet_stretch_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "think": {
-      "frameInterval": 0.3,
-      "frames": [
+    "surprised" : {
+      "frameInterval" : 0.12,
+      "frames" : [
+        "pet_surprised_0",
+        "pet_surprised_1",
+        "pet_surprised_2"
+      ],
+      "loop" : false
+    },
+    "tailWag" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "pet_tailWag_0",
+        "pet_tailWag_1",
+        "pet_tailWag_2",
+        "pet_tailWag_3",
+        "pet_tailWag_4"
+      ],
+      "loop" : true
+    },
+    "think" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "pet_think_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "trip": {
-      "frameInterval": 0.12,
-      "frames": [
+    "trainingCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "pet_guard_0",
+        "pet_guard_2",
+        "pet_crouch_0",
+        "pet_pounce_0",
+        "pet_pawTap_0",
+        "pet_pawReach_0",
+        "pet_angry_0",
+        "pet_proud_0"
+      ],
+      "loop" : false
+    },
+    "trip" : {
+      "frameInterval" : 0.12,
+      "frames" : [
         "pet_trip_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "type": {
-      "frameInterval": 0.3,
-      "frames": [
+    "type" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "pet_type_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "walk": {
-      "frameInterval": 0.12,
-      "frames": [
+    "walk" : {
+      "frameInterval" : 0.12,
+      "frames" : [
         "pet_walk_0",
         "pet_walk_1",
         "pet_walk_2"
       ],
-      "loop": true
+      "loop" : true
     },
-    "wave": {
-      "frameInterval": 0.2,
-      "frames": [
+    "wave" : {
+      "frameInterval" : 0.20000000000000001,
+      "frames" : [
         "pet_wave_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "punch": {
-      "frameInterval": 0.14,
-      "frames": [
-        "pet_angry_0"
-      ],
-      "loop": false
-    },
-    "write": {
-      "frameInterval": 0.4,
-      "frames": [
+    "write" : {
+      "frameInterval" : 0.40000000000000002,
+      "frames" : [
         "pet_write_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "yawn": {
-      "frameInterval": 0.4,
-      "frames": [
+    "yawn" : {
+      "frameInterval" : 0.40000000000000002,
+      "frames" : [
         "pet_yawn_0"
       ],
-      "loop": false
-    },
-    "somersault": {
-      "frameInterval": 0.15,
-      "frames": [
-        "pet_angry_0"
-      ],
-      "loop": false
+      "loop" : false
     }
   },
-  "version": "5.0.0"
+  "version" : "5.0.0"
 }

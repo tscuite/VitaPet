@@ -24,6 +24,7 @@ CLAUDE.local.md
 .bolt/
 .v0/
 .codex/
+.superpowers/
 .prompts/
 .ai/
 .openspec/

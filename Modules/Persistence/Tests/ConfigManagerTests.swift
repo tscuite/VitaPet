@@ -49,6 +49,8 @@ final class ConfigManagerTests: XCTestCase {
         XCTAssertEqual(manager.config.aiBackend, "ollama")
         XCTAssertEqual(manager.config.openAIApiKey, "")
         XCTAssertEqual(manager.config.mcpServersJSON, "")
+        XCTAssertFalse(manager.config.chatWindowTranslucencyEnabled)
+        XCTAssertEqual(manager.config.chatWindowOpacity, 1.0)
         XCTAssertEqual(
             manager.config.locale,
             (Locale.preferredLanguages.first ?? Locale.current.identifier).hasPrefix("zh") ? "zh-Hans" : "en"
@@ -180,6 +182,8 @@ final class ConfigManagerTests: XCTestCase {
             githubToken: "github-token-placeholder",
             webhookEnabled: true,
             webhookPort: 18080,
+            chatWindowTranslucencyEnabled: true,
+            chatWindowOpacity: 0.72,
             spaceMode: "singleSpace",
             memoryWorkerEnabled: true,
             memoryWorkerEndpoint: "https://memory.example.com",
@@ -201,6 +205,8 @@ final class ConfigManagerTests: XCTestCase {
         XCTAssertEqual(decoded.githubToken, "github-token-placeholder")
         XCTAssertEqual(decoded.webhookEnabled, true)
         XCTAssertEqual(decoded.webhookPort, 18080)
+        XCTAssertEqual(decoded.chatWindowTranslucencyEnabled, true)
+        XCTAssertEqual(decoded.chatWindowOpacity, 0.72)
         XCTAssertEqual(decoded.ollamaEndpoint, "http://127.0.0.1:11435")
         XCTAssertEqual(decoded.aiBackend, "openai-compatible")
         XCTAssertEqual(decoded.ollamaModel, "qwen2.5")
@@ -327,6 +333,30 @@ final class ConfigManagerTests: XCTestCase {
         XCTAssertEqual(decoded.pets[0].positionY, 240)
         XCTAssertEqual(decoded.selectedSpritePack, "legacy-pack")
         XCTAssertEqual(decoded.aiBackend, "ollama")
+        XCTAssertFalse(decoded.chatWindowTranslucencyEnabled)
+        XCTAssertEqual(decoded.chatWindowOpacity, 1.0)
+    }
+
+    func testChatWindowOpacity_isClamped() throws {
+        let tooLow = ConfigManager.AppConfig(
+            windowPositionX: 1,
+            windowPositionY: 2,
+            selectedSpritePack: "default",
+            enabledCapabilities: [:],
+            locale: "en",
+            chatWindowOpacity: 0.1
+        )
+        let tooHigh = ConfigManager.AppConfig(
+            windowPositionX: 1,
+            windowPositionY: 2,
+            selectedSpritePack: "default",
+            enabledCapabilities: [:],
+            locale: "en",
+            chatWindowOpacity: 1.5
+        )
+
+        XCTAssertEqual(tooLow.chatWindowOpacity, 0.55)
+        XCTAssertEqual(tooHigh.chatWindowOpacity, 1.0)
     }
 
     func testUpdate_persistsMultiplePets() throws {

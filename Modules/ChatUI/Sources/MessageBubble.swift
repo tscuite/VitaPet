@@ -5,7 +5,6 @@ public struct MessageBubble: View, Equatable {
     let message: ChatMessage
     let isStreaming: Bool
     let showsThinking: Bool
-    private let parsedContent: ParsedMessage
     @State private var thinkingExpanded: Bool = true
 
     nonisolated public static func == (lhs: MessageBubble, rhs: MessageBubble) -> Bool {
@@ -18,7 +17,6 @@ public struct MessageBubble: View, Equatable {
         self.message = message
         self.isStreaming = isStreaming
         self.showsThinking = showsThinking
-        self.parsedContent = Self.split(message.content)
     }
 
     public var body: some View {
@@ -60,7 +58,7 @@ public struct MessageBubble: View, Equatable {
     }
 
     private var bubble: some View {
-        Text(LocalizedStringKey(parsedContent.reply.isEmpty ? " " : parsedContent.reply))
+        Text(verbatim: parsedContent.reply.isEmpty ? " " : parsedContent.reply)
             .textSelection(.enabled)
             .foregroundStyle(foregroundColor)
             .fixedSize(horizontal: false, vertical: true)
@@ -95,7 +93,7 @@ public struct MessageBubble: View, Equatable {
             .buttonStyle(.plain)
 
             if thinkingExpanded {
-                Text(thinking)
+                Text(verbatim: thinking)
                     .font(.caption.italic())
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
@@ -113,6 +111,13 @@ public struct MessageBubble: View, Equatable {
     private struct ParsedMessage {
         let thinking: String?
         let reply: String
+    }
+
+    // Keep parsing out of init. `ForEach` creates candidate values for every
+    // visible message during a streaming update; `.equatable()` can then skip
+    // unchanged bubbles before their bodies (and this parser) are evaluated.
+    private var parsedContent: ParsedMessage {
+        Self.split(message.content)
     }
 
     /// Parse the live or canonical assistant content into reasoning + reply.

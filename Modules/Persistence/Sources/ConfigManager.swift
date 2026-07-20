@@ -25,6 +25,8 @@ public final class ConfigManager {
         public var webhookEnabled: Bool
         public var webhookPort: Int
         public var webhookSecret: String
+        public var chatWindowTranslucencyEnabled: Bool
+        public var chatWindowOpacity: Double
         public var spaceMode: String  // "allSpaces", "follow", "singleSpace"
         public var memoryWorkerEnabled: Bool
         public var memoryWorkerEndpoint: String
@@ -58,6 +60,8 @@ public final class ConfigManager {
             webhookEnabled: Bool = false,
             webhookPort: Int = 19280,
             webhookSecret: String = "",
+            chatWindowTranslucencyEnabled: Bool = false,
+            chatWindowOpacity: Double = 1.0,
             spaceMode: String = "allSpaces",
             memoryWorkerEnabled: Bool = false,
             memoryWorkerEndpoint: String = "https://memory.example.com",
@@ -99,6 +103,8 @@ public final class ConfigManager {
             self.webhookEnabled = webhookEnabled
             self.webhookPort = webhookPort
             self.webhookSecret = webhookSecret
+            self.chatWindowTranslucencyEnabled = chatWindowTranslucencyEnabled
+            self.chatWindowOpacity = Self.clampedChatWindowOpacity(chatWindowOpacity)
             self.spaceMode = spaceMode
             self.memoryWorkerEnabled = memoryWorkerEnabled
             self.memoryWorkerEndpoint = memoryWorkerEndpoint
@@ -133,6 +139,8 @@ public final class ConfigManager {
             case webhookEnabled
             case webhookPort
             case webhookSecret
+            case chatWindowTranslucencyEnabled
+            case chatWindowOpacity
             case spaceMode
             case memoryWorkerEnabled
             case memoryWorkerEndpoint
@@ -182,6 +190,13 @@ public final class ConfigManager {
             webhookEnabled = try container.decodeIfPresent(Bool.self, forKey: .webhookEnabled) ?? false
             webhookPort = try container.decodeIfPresent(Int.self, forKey: .webhookPort) ?? 19280
             webhookSecret = try container.decodeIfPresent(String.self, forKey: .webhookSecret) ?? ""
+            chatWindowTranslucencyEnabled = try container.decodeIfPresent(
+                Bool.self,
+                forKey: .chatWindowTranslucencyEnabled
+            ) ?? false
+            chatWindowOpacity = Self.clampedChatWindowOpacity(
+                try container.decodeIfPresent(Double.self, forKey: .chatWindowOpacity) ?? 1.0
+            )
             spaceMode = try container.decodeIfPresent(String.self, forKey: .spaceMode) ?? "allSpaces"
             memoryWorkerEnabled = try container.decodeIfPresent(Bool.self, forKey: .memoryWorkerEnabled) ?? false
             memoryWorkerEndpoint = try container.decodeIfPresent(String.self, forKey: .memoryWorkerEndpoint) ?? "https://memory.example.com"
@@ -260,6 +275,14 @@ public final class ConfigManager {
 
         private static func clampedMemoryQueryLimit(_ value: Int) -> Int {
             max(1, min(100, value))
+        }
+
+        private static func clampedChatWindowOpacity(_ value: Double) -> Double {
+            guard value.isFinite else {
+                return 1.0
+            }
+
+            return max(0.55, min(1.0, value))
         }
 
         private static func normalizedMemoryHorizon(_ value: String) -> String {

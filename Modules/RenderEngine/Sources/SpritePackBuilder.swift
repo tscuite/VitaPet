@@ -141,6 +141,8 @@ public struct SpritePackBuilder: Sendable {
             return 0.3
         case .punch:
             return 0.14
+        case .danceCombo, .somersaultCombo, .boxingCombo, .parkourCombo, .partyCombo, .trainingCombo, .joySpinCombo:
+            return 0.12
         default:
             return 0.2
         }
@@ -148,7 +150,8 @@ public struct SpritePackBuilder: Sendable {
 
     private static func defaultLoop(for state: AnimationState) -> Bool {
         switch state {
-        case .idle, .walk, .run, .follow, .sleep, .sit, .dance, .type, .read, .write, .phone:
+        case .idle, .walk, .run, .follow, .sleep, .sit, .dance, .type, .read, .write, .phone,
+             .nap, .meditate, .tailWag, .guardDuty:
             return true
         default:
             return false

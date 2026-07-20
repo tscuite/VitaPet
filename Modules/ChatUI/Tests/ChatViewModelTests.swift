@@ -163,7 +163,7 @@ final class ChatViewModelTests: XCTestCase {
     func testSendMessage_streamsAssistantReply() {
         let expectation = XCTestExpectation(description: "assistant replied")
         let viewModel = ChatViewModel(
-            sendToAI: { _, _ in
+            sendToAI: { _, _, _ in
                 AsyncThrowingStream { continuation in
                     continuation.yield("Hello")
                     continuation.yield(", ")
@@ -173,7 +173,7 @@ final class ChatViewModelTests: XCTestCase {
             },
             getAIStatus: { .ready }
         )
-        viewModel.onAssistantReplied = {
+        viewModel.onAssistantReplied = { _, _ in
             expectation.fulfill()
         }
 
@@ -188,7 +188,7 @@ final class ChatViewModelTests: XCTestCase {
     func testSendMessage_storesMessagesInSelectedConversation() {
         let expectation = XCTestExpectation(description: "assistant replied")
         let viewModel = ChatViewModel(
-            sendToAI: { _, _ in
+            sendToAI: { _, _, _ in
                 AsyncThrowingStream { continuation in
                     continuation.yield("reply")
                     continuation.finish()
@@ -198,7 +198,7 @@ final class ChatViewModelTests: XCTestCase {
         )
         let thread = ConversationThread(id: "c1", type: .single, participantIds: [UUID()], title: "Chat 1")
         viewModel.loadConversations([thread])
-        viewModel.onAssistantReplied = {
+        viewModel.onAssistantReplied = { _, _ in
             expectation.fulfill()
         }
 
@@ -214,7 +214,7 @@ final class ChatViewModelTests: XCTestCase {
     func testSendMessage_streamingChunks_updatesConversationPreviewWithFinalReply() {
         let expectation = XCTestExpectation(description: "assistant replied")
         let viewModel = ChatViewModel(
-            sendToAI: { _, _ in
+            sendToAI: { _, _, _ in
                 AsyncThrowingStream { continuation in
                     continuation.yield("Hello")
                     continuation.yield(", ")
@@ -226,7 +226,7 @@ final class ChatViewModelTests: XCTestCase {
         )
         let thread = ConversationThread(id: "c1", type: .single, participantIds: [UUID()], title: "Chat 1")
         viewModel.loadConversations([thread])
-        viewModel.onAssistantReplied = {
+        viewModel.onAssistantReplied = { _, _ in
             expectation.fulfill()
         }
 
@@ -241,7 +241,7 @@ final class ChatViewModelTests: XCTestCase {
     func testSwitchingConversation_updatesCurrentMessagesAfterSending() {
         let replyExpectation = XCTestExpectation(description: "assistant replied")
         let viewModel = ChatViewModel(
-            sendToAI: { input, _ in
+            sendToAI: { _, input, _ in
                 AsyncThrowingStream { continuation in
                     continuation.yield("reply to \(input)")
                     continuation.finish()
@@ -253,7 +253,7 @@ final class ChatViewModelTests: XCTestCase {
         let second = ConversationThread(id: "c2", type: .single, participantIds: [UUID()], title: "Second")
         viewModel.loadConversations([first, second])
         viewModel.loadMessages(for: "c2", messages: [ChatMessage(role: .assistant, content: "existing")])
-        viewModel.onAssistantReplied = {
+        viewModel.onAssistantReplied = { _, _ in
             replyExpectation.fulfill()
         }
 
@@ -265,6 +265,97 @@ final class ChatViewModelTests: XCTestCase {
         viewModel.selectConversation("c2")
 
         XCTAssertEqual(viewModel.messages.map(\.content), ["existing"])
+    }
+
+    func testSwitchingConversationWhileStreaming_keepsReplyInOriginConversation() async {
+        let replyStream = ControlledReplyStream()
+        let replyExpectation = XCTestExpectation(description: "assistant replied")
+        let viewModel = ChatViewModel(
+            sendToAI: { conversationId, _, _ in
+                replyStream.record(conversationId: conversationId)
+                return replyStream.stream
+            },
+            getAIStatus: { .ready }
+        )
+        let first = ConversationThread(id: "c1", type: .single, participantIds: [], title: "First")
+        let second = ConversationThread(id: "c2", type: .single, participantIds: [], title: "Second")
+        viewModel.loadConversations([first, second])
+        viewModel.loadMessages(
+            for: "c2",
+            messages: [ChatMessage(role: .assistant, content: "existing")]
+        )
+        viewModel.onAssistantReplied = { _, _ in
+            replyExpectation.fulfill()
+        }
+
+        viewModel.inputText = "hello"
+        viewModel.sendMessage()
+        await waitUntil {
+            viewModel.isStreaming && viewModel.messages.count == 2 && replyStream.isReady
+        }
+
+        viewModel.selectConversation("c2")
+        replyStream.yield("reply")
+        replyStream.finish()
+        await fulfillment(of: [replyExpectation], timeout: 1.0)
+
+        XCTAssertEqual(replyStream.requestedConversationId, "c1")
+        XCTAssertEqual(viewModel.messages.map(\.content), ["existing"])
+        viewModel.selectConversation("c1")
+        XCTAssertEqual(viewModel.messages.map(\.content), ["hello", "reply"])
+    }
+
+    func testDeletingOriginConversationWhileStreaming_doesNotResurrectIt() async {
+        let replyStream = ControlledReplyStream()
+        let viewModel = ChatViewModel(
+            sendToAI: { _, _, _ in replyStream.stream },
+            getAIStatus: { .ready }
+        )
+        let first = ConversationThread(id: "c1", type: .single, participantIds: [], title: "First")
+        let second = ConversationThread(id: "c2", type: .single, participantIds: [], title: "Second")
+        viewModel.loadConversations([first, second])
+        viewModel.loadMessages(
+            for: "c2",
+            messages: [ChatMessage(role: .assistant, content: "existing")]
+        )
+
+        viewModel.inputText = "hello"
+        viewModel.sendMessage()
+        await waitUntil {
+            viewModel.isStreaming && viewModel.messages.count == 2 && replyStream.isReady
+        }
+
+        viewModel.deleteConversation("c1")
+        replyStream.yield("late reply")
+        replyStream.finish()
+        await waitUntil { !viewModel.isStreaming }
+
+        XCTAssertEqual(viewModel.conversations.map(\.id), ["c2"])
+        XCTAssertEqual(viewModel.selectedConversationId, "c2")
+        XCTAssertEqual(viewModel.messages.map(\.content), ["existing"])
+    }
+
+    func testCancelStreaming_terminatesSourceWithoutReportingAReply() async {
+        let replyStream = ControlledReplyStream()
+        var didReportReply = false
+        let viewModel = ChatViewModel(
+            sendToAI: { _, _, _ in replyStream.stream },
+            getAIStatus: { .ready }
+        )
+        viewModel.onAssistantReplied = { _, _ in
+            didReportReply = true
+        }
+        viewModel.inputText = "hello"
+        viewModel.sendMessage()
+        await waitUntil {
+            viewModel.isStreaming && viewModel.messages.count == 2 && replyStream.isReady
+        }
+
+        viewModel.cancelStreaming()
+        await waitUntil { !viewModel.isStreaming && replyStream.isTerminated }
+
+        XCTAssertFalse(didReportReply)
+        XCTAssertEqual(viewModel.messages.map(\.content), ["hello"])
     }
 
     func testInputText_defaultIsEmpty() {
@@ -292,5 +383,77 @@ final class ChatViewModelTests: XCTestCase {
         }
 
         XCTAssertGreaterThanOrEqual(viewModel.messages.count, count)
+    }
+
+    private func waitUntil(
+        timeout: Duration = .seconds(1),
+        condition: @MainActor () -> Bool
+    ) async {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while !condition(), clock.now < deadline {
+            await Task.yield()
+        }
+        XCTAssertTrue(condition())
+    }
+}
+
+private final class ControlledReplyStream: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: AsyncThrowingStream<String, Error>.Continuation?
+    private var conversationId: String?
+    private var terminated = false
+
+    lazy var stream = AsyncThrowingStream<String, Error> { continuation in
+        lock.lock()
+        self.continuation = continuation
+        lock.unlock()
+        continuation.onTermination = { [weak self] _ in
+            guard let self else { return }
+            self.lock.lock()
+            self.terminated = true
+            self.lock.unlock()
+        }
+    }
+
+    func yield(_ chunk: String) {
+        lock.lock()
+        let continuation = continuation
+        lock.unlock()
+        continuation?.yield(chunk)
+    }
+
+    func finish() {
+        lock.lock()
+        let continuation = continuation
+        lock.unlock()
+        continuation?.finish()
+    }
+
+    func record(conversationId: String) {
+        lock.lock()
+        self.conversationId = conversationId
+        lock.unlock()
+    }
+
+    var requestedConversationId: String? {
+        lock.lock()
+        let conversationId = conversationId
+        lock.unlock()
+        return conversationId
+    }
+
+    var isReady: Bool {
+        lock.lock()
+        let isReady = continuation != nil
+        lock.unlock()
+        return isReady
+    }
+
+    var isTerminated: Bool {
+        lock.lock()
+        let terminated = terminated
+        lock.unlock()
+        return terminated
     }
 }

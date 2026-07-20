@@ -119,8 +119,24 @@ public struct SpritePackLoader: Sendable {
         return discoveredPacks
     }
 
-    private static func defaultAnimation(for state: AnimationState) -> SpriteManifest.StateAnimation {
-        let loopingStates: Set<AnimationState> = [.idle, .walk, .run, .follow, .sleep, .sit, .dance, .type, .read, .write, .phone]
+    static func defaultAnimation(for state: AnimationState) -> SpriteManifest.StateAnimation {
+        let loopingStates: Set<AnimationState> = [
+            .idle,
+            .walk,
+            .run,
+            .follow,
+            .sleep,
+            .sit,
+            .dance,
+            .type,
+            .read,
+            .write,
+            .phone,
+            .nap,
+            .meditate,
+            .tailWag,
+            .guardDuty
+        ]
 
         switch state {
         case .idle:
@@ -187,6 +203,62 @@ public struct SpritePackLoader: Sendable {
             return .init(
                 frames: ["pet_angry_0"],
                 frameInterval: 0.14,
+                loop: false
+            )
+        case .blink:
+            return .init(frames: ["pet_blink_0", "pet_blink_1", "pet_blink_2", "pet_blink_3"], frameInterval: 0.09, loop: false)
+        case .sniff:
+            return .init(frames: ["pet_sniff_0", "pet_sniff_1", "pet_sniff_2", "pet_sniff_3"], frameInterval: 0.14, loop: false)
+        case .tailWag:
+            return .init(frames: ["pet_tailWag_0", "pet_tailWag_1", "pet_tailWag_2", "pet_tailWag_3", "pet_tailWag_4"], frameInterval: 0.10, loop: true)
+        case .pawTap:
+            return .init(frames: ["pet_pawTap_0", "pet_pawTap_1", "pet_pawTap_2", "pet_pawTap_3"], frameInterval: 0.10, loop: false)
+        case .pounce:
+            return .init(frames: ["pet_pounce_0", "pet_pounce_1", "pet_pounce_2", "pet_pounce_3"], frameInterval: 0.10, loop: false)
+        case .crouch:
+            return .init(frames: ["pet_crouch_0", "pet_crouch_1", "pet_crouch_2"], frameInterval: 0.14, loop: false)
+        case .crawl:
+            return .init(frames: ["pet_crawl_0", "pet_crawl_1", "pet_crawl_2", "pet_crawl_3"], frameInterval: 0.12, loop: false)
+        case .nap:
+            return .init(frames: ["pet_nap_0", "pet_nap_1", "pet_nap_2", "pet_nap_3"], frameInterval: 0.55, loop: true)
+        case .dream:
+            return .init(frames: ["pet_dream_0", "pet_dream_1", "pet_dream_2", "pet_dream_3"], frameInterval: 0.32, loop: false)
+        case .beg:
+            return .init(frames: ["pet_beg_0", "pet_beg_1", "pet_beg_2", "pet_beg_3"], frameInterval: 0.14, loop: false)
+        case .nuzzle:
+            return .init(frames: ["pet_nuzzle_0", "pet_nuzzle_1", "pet_nuzzle_2", "pet_nuzzle_3"], frameInterval: 0.14, loop: false)
+        case .surprised:
+            return .init(frames: ["pet_surprised_0", "pet_surprised_1", "pet_surprised_2"], frameInterval: 0.12, loop: false)
+        case .blush:
+            return .init(frames: ["pet_blush_0", "pet_blush_1", "pet_blush_2", "pet_blush_3"], frameInterval: 0.18, loop: false)
+        case .proud:
+            return .init(frames: ["pet_proud_0", "pet_proud_1", "pet_proud_2", "pet_proud_3"], frameInterval: 0.16, loop: false)
+        case .melt:
+            return .init(frames: ["pet_melt_0", "pet_melt_1", "pet_melt_2", "pet_melt_3"], frameInterval: 0.18, loop: false)
+        case .sing:
+            return .init(frames: ["pet_sing_0", "pet_sing_1", "pet_sing_2", "pet_sing_3", "pet_sing_4"], frameInterval: 0.13, loop: false)
+        case .meditate:
+            return .init(frames: ["pet_meditate_0", "pet_meditate_1", "pet_meditate_2", "pet_meditate_3"], frameInterval: 0.42, loop: true)
+        case .coffee:
+            return .init(frames: ["pet_coffee_0", "pet_coffee_1", "pet_coffee_2", "pet_coffee_3"], frameInterval: 0.22, loop: false)
+        case .snack:
+            return .init(frames: ["pet_snack_0", "pet_snack_1", "pet_snack_2", "pet_snack_3"], frameInterval: 0.15, loop: false)
+        case .stargaze:
+            return .init(frames: ["pet_stargaze_0", "pet_stargaze_1", "pet_stargaze_2", "pet_stargaze_3"], frameInterval: 0.28, loop: false)
+        case .sparkle:
+            return .init(frames: ["pet_sparkle_0", "pet_sparkle_1", "pet_sparkle_2", "pet_sparkle_3", "pet_sparkle_4"], frameInterval: 0.10, loop: false)
+        case .slide:
+            return .init(frames: ["pet_slide_0", "pet_slide_1", "pet_slide_2", "pet_slide_3"], frameInterval: 0.09, loop: false)
+        case .pawReach:
+            return .init(frames: ["pet_pawReach_0", "pet_pawReach_1", "pet_pawReach_2", "pet_pawReach_3"], frameInterval: 0.12, loop: false)
+        case .guardDuty:
+            return .init(frames: ["pet_guard_0", "pet_guard_1", "pet_guard_2", "pet_guard_3"], frameInterval: 0.22, loop: true)
+        case .somersault:
+            return .init(frames: ["pet_somersault_0", "pet_somersault_1", "pet_somersault_2", "pet_somersault_3"], frameInterval: 0.09, loop: false)
+        case .danceCombo, .somersaultCombo, .boxingCombo, .parkourCombo, .partyCombo, .trainingCombo, .joySpinCombo:
+            return .init(
+                frames: ActionComboPlanner.manifestFrames(for: state, prefix: "pet") ?? ["pet_idle_0"],
+                frameInterval: 0.12,
                 loop: false
             )
         default:

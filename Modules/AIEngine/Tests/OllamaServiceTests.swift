@@ -5,6 +5,11 @@ import XCTest
 private final class OllamaServiceURLProtocol: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var requestHandler: (@Sendable (URLRequest) throws -> (HTTPURLResponse, Data))?
+    nonisolated(unsafe) private static var shouldSuspendNextRequest = false
+    nonisolated(unsafe) private static var suspendedStartHandler: (@Sendable (URLRequest) -> Void)?
+    nonisolated(unsafe) private static var suspendedStopHandler: (@Sendable () -> Void)?
+    nonisolated(unsafe) private static var suspendedRequest: OllamaServiceURLProtocol?
+    private var isSuspendedRequest = false
 
     override class func canInit(with request: URLRequest) -> Bool {
         true
@@ -17,13 +22,31 @@ private final class OllamaServiceURLProtocol: URLProtocol, @unchecked Sendable {
     override func startLoading() {
         Self.lock.lock()
         let handler = Self.requestHandler
+        let shouldSuspend = Self.shouldSuspendNextRequest
+        let suspendedStartHandler = Self.suspendedStartHandler
+        if shouldSuspend {
+            Self.shouldSuspendNextRequest = false
+            isSuspendedRequest = true
+            Self.suspendedRequest = self
+        }
         Self.lock.unlock()
+
+        if shouldSuspend {
+            suspendedStartHandler?(request)
+            return
+        }
 
         guard let handler else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
             return
         }
 
+        deliver(using: handler)
+    }
+
+    private func deliver(
+        using handler: @Sendable (URLRequest) throws -> (HTTPURLResponse, Data)
+    ) {
         do {
             let (response, data) = try handler(request)
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -34,20 +57,67 @@ private final class OllamaServiceURLProtocol: URLProtocol, @unchecked Sendable {
         }
     }
 
-    override func stopLoading() {}
+    override func stopLoading() {
+        Self.lock.lock()
+        guard isSuspendedRequest else {
+            Self.lock.unlock()
+            return
+        }
+        isSuspendedRequest = false
+        if Self.suspendedRequest === self {
+            Self.suspendedRequest = nil
+        }
+        let suspendedStopHandler = Self.suspendedStopHandler
+        Self.lock.unlock()
+        suspendedStopHandler?()
+    }
 
     static func install(
         handler: @escaping @Sendable (URLRequest) throws -> (HTTPURLResponse, Data)
     ) {
         lock.lock()
         requestHandler = handler
+        shouldSuspendNextRequest = false
+        suspendedStartHandler = nil
+        suspendedStopHandler = nil
+        suspendedRequest = nil
         lock.unlock()
         URLProtocol.registerClass(Self.self)
+    }
+
+    static func suspendNextRequest(
+        onStart: @escaping @Sendable (URLRequest) -> Void,
+        onStop: @escaping @Sendable () -> Void
+    ) {
+        lock.lock()
+        shouldSuspendNextRequest = true
+        suspendedStartHandler = onStart
+        suspendedStopHandler = onStop
+        lock.unlock()
+    }
+
+    static func resumeSuspendedRequest() -> Bool {
+        lock.lock()
+        guard let suspendedRequest, let requestHandler else {
+            lock.unlock()
+            return false
+        }
+        Self.suspendedRequest = nil
+        shouldSuspendNextRequest = false
+        suspendedRequest.isSuspendedRequest = false
+        lock.unlock()
+
+        suspendedRequest.deliver(using: requestHandler)
+        return true
     }
 
     static func uninstall() {
         lock.lock()
         requestHandler = nil
+        shouldSuspendNextRequest = false
+        suspendedStartHandler = nil
+        suspendedStopHandler = nil
+        suspendedRequest = nil
         lock.unlock()
         URLProtocol.unregisterClass(Self.self)
     }
@@ -75,6 +145,24 @@ private actor ToolCallRecorder {
     func all() -> [PetToolCall] {
         calls
     }
+}
+
+private final class LockedRequestCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func next() -> Int {
+        lock.lock()
+        value += 1
+        let result = value
+        lock.unlock()
+        return result
+    }
+}
+
+private enum SessionRoutingOperation: Sendable, Equatable {
+    case send
+    case sendWithTools
 }
 
 private extension URLRequest {
@@ -129,6 +217,45 @@ final class OllamaServiceTests: XCTestCase {
         } else {
             XCTFail("Expected initial status to be .notConfigured")
         }
+    }
+
+    func testCancellingSendStreamStopsUnderlyingURLRequest() async throws {
+        let service = OllamaService(
+            endpoint: URL(string: "http://unit.test")!,
+            model: "llama3.2"
+        )
+        OllamaServiceURLProtocol.install { request in
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (response, Data(#"{"models":[]}"#.utf8))
+        }
+        await service.checkConnection()
+
+        let requestStarted = expectation(description: "request started")
+        let requestStopped = expectation(description: "request stopped")
+        OllamaServiceURLProtocol.suspendNextRequest(
+            onStart: { _ in requestStarted.fulfill() },
+            onStop: { requestStopped.fulfill() }
+        )
+
+        let stream = try await service.send(message: "hello")
+        let consumer = Task {
+            do {
+                for try await _ in stream {}
+            } catch {
+                // Explicit consumer cancellation may surface as CancellationError.
+            }
+        }
+        await fulfillment(of: [requestStarted], timeout: 1.0)
+
+        consumer.cancel()
+        _ = await consumer.result
+
+        await fulfillment(of: [requestStopped], timeout: 1.0)
     }
 
     func testBuildChatRequest() throws {
@@ -369,6 +496,174 @@ final class OllamaServiceTests: XCTestCase {
         await service.switchSession("session-b")
         let updatedSessionBHistory = await service.conversationHistorySnapshot()
         XCTAssertEqual(updatedSessionBHistory.map(\.content), ["session-b"])
+    }
+
+    func testSend_ollamaKeepsOriginSessionAcrossConnectionCheckAndCompletion() async throws {
+        try await assertCompletionStaysInOriginSession(
+            backend: .ollama,
+            operation: .send,
+            assistantReply: "ollama-origin-reply"
+        )
+    }
+
+    func testSend_openAICompatibleKeepsOriginSessionAcrossConnectionCheckAndCompletion() async throws {
+        try await assertCompletionStaysInOriginSession(
+            backend: .openAICompatible,
+            operation: .send,
+            assistantReply: "openai-origin-reply"
+        )
+    }
+
+    func testSendWithTools_keepsOriginSessionAcrossConnectionCheckAndCompletion() async throws {
+        try await assertCompletionStaysInOriginSession(
+            backend: .openAICompatible,
+            operation: .sendWithTools,
+            assistantReply: "tool-origin-reply"
+        )
+    }
+
+    private func assertCompletionStaysInOriginSession(
+        backend: AIBackend,
+        operation: SessionRoutingOperation,
+        assistantReply: String
+    ) async throws {
+        let service = OllamaService(
+            endpoint: URL(string: "http://unit.test")!,
+            model: backend == .ollama ? "llama3.2" : "auto",
+            backend: backend
+        )
+        let requestCounter = LockedRequestCounter()
+        let connectionRequestStarted = expectation(description: "origin session connection request started")
+        let callbackReceived = expectation(description: "origin session callbacks received")
+        callbackReceived.expectedFulfillmentCount = 2
+        let recorder = ConversationUpdateRecorder()
+
+        let initialStatus = await service.status
+        guard case .notConfigured = initialStatus else {
+            return XCTFail("routing regression requires an initially non-ready service")
+        }
+
+        OllamaServiceURLProtocol.install { request in
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+
+            if request.url?.path == "/api/tags" {
+                return (response, Data(#"{"models":[]}"#.utf8))
+            }
+            if request.url?.path == "/v1/models" {
+                return (response, Data(#"{"data":[]}"#.utf8))
+            }
+
+            let body = try XCTUnwrap(request.bodyDataForTesting())
+            let object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(with: body) as? [String: Any]
+            )
+            let messages = try XCTUnwrap(object["messages"] as? [[String: Any]])
+            let contents = messages.compactMap { $0["content"] as? String }
+            XCTAssertTrue(contents.contains("c1-history-user"))
+            XCTAssertTrue(contents.contains("c1-history-assistant"))
+            XCTAssertFalse(contents.contains("c2-existing"))
+
+            let requestNumber = requestCounter.next()
+            if operation == .sendWithTools, requestNumber == 1 {
+                let payload = Data(
+                    #"{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"pet_action","arguments":"{\"action\":\"wave\"}"}}]}}]}"#.utf8
+                )
+                return (response, payload)
+            }
+
+            if backend == .ollama {
+                let payload = Data(
+                    """
+                    {"model":"llama3.2","message":{"role":"assistant","content":"\(assistantReply)"},"done":false}
+                    {"model":"llama3.2","message":{"role":"assistant","content":""},"done":true}
+                    """.utf8
+                )
+                return (response, payload)
+            }
+
+            let payload = Data(
+                #"{"choices":[{"finish_reason":"stop","index":0,"message":{"role":"assistant","content":"\#(assistantReply)"}}]}"#.utf8
+            )
+            return (response, payload)
+        }
+
+        await service.loadHistory(
+            turns: [
+                (role: "user", content: "c1-history-user"),
+                (role: "assistant", content: "c1-history-assistant")
+            ],
+            sessionId: "c1"
+        )
+        await service.setOnConversationUpdated { role, content, sessionId, petId, petName in
+            await recorder.record(
+                role: role,
+                content: content,
+                sessionId: sessionId,
+                petId: petId,
+                petName: petName
+            )
+            callbackReceived.fulfill()
+        }
+
+        let expectedConnectionPath = backend == .ollama ? "/api/tags" : "/v1/models"
+        OllamaServiceURLProtocol.suspendNextRequest(
+            onStart: { request in
+                XCTAssertEqual(request.url?.path, expectedConnectionPath)
+                connectionRequestStarted.fulfill()
+            },
+            onStop: {}
+        )
+
+        let consumer = Task { () throws -> String in
+            let stream: AsyncThrowingStream<String, Error>
+            switch operation {
+            case .send:
+                stream = try await service.send(message: "c1-new-user")
+            case .sendWithTools:
+                stream = try await service.sendWithTools(
+                    message: "c1-new-user",
+                    tools: [OllamaTool.petActionTool(availableActions: ["wave"])],
+                    onToolCall: { _ in "tool-result" }
+                )
+            }
+
+            var collected = ""
+            for try await chunk in stream {
+                collected += chunk
+            }
+            return collected
+        }
+        await fulfillment(of: [connectionRequestStarted], timeout: 1.0)
+
+        await service.switchSession("c2")
+        await service.setConversationHistoryForTesting([
+            ChatMessage(role: .assistant, content: "c2-existing")
+        ])
+        XCTAssertTrue(OllamaServiceURLProtocol.resumeSuspendedRequest())
+
+        let collected = try await consumer.value
+        XCTAssertEqual(collected, assistantReply)
+        await fulfillment(of: [callbackReceived], timeout: 1.0)
+
+        await service.switchSession("c1")
+        let c1History = await service.conversationHistorySnapshot()
+        XCTAssertEqual(
+            c1History.map(\.content),
+            ["c1-history-user", "c1-history-assistant", "c1-new-user", assistantReply]
+        )
+
+        await service.switchSession("c2")
+        let c2History = await service.conversationHistorySnapshot()
+        XCTAssertEqual(c2History.map(\.content), ["c2-existing"])
+
+        let updates = await recorder.all()
+        XCTAssertEqual(updates.map(\.sessionId), ["c1", "c1"])
+        XCTAssertEqual(updates.map(\.content), ["c1-new-user", assistantReply])
     }
 
     func testLoadHistory_withSessionId_setsActiveSessionHistory() async {
@@ -1168,6 +1463,36 @@ final class OllamaServiceTests: XCTestCase {
         )
 
         XCTAssertEqual(result, "1 traveler planned")
+        await client.close()
+    }
+
+    func testMCPClient_cancelledStdioRequestReturnsWithoutWaitingForTimeout() async {
+        let configuration = MCPServerConfiguration(
+            name: "blocking-test",
+            transport: .stdio,
+            command: "/bin/sh",
+            args: ["-c", "while IFS= read -r line; do sleep 60; done"]
+        )
+        let client = MCPClient(configuration: configuration)
+        let request = Task {
+            try await client.listTools()
+        }
+
+        try? await Task.sleep(for: .milliseconds(100))
+        let clock = ContinuousClock()
+        let cancellationStarted = clock.now
+        request.cancel()
+
+        do {
+            _ = try await request.value
+            XCTFail("Expected stdio request cancellation")
+        } catch is CancellationError {
+            // Expected.
+        } catch {
+            XCTFail("Unexpected cancellation error: \(error)")
+        }
+
+        XCTAssertLessThan(cancellationStarted.duration(to: clock.now), .seconds(1))
         await client.close()
     }
 }

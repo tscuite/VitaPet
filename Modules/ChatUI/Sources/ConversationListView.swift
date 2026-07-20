@@ -57,17 +57,7 @@ struct ConversationListView: View {
                     .padding(.vertical, 12)
                     .background(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [
-                                        Color.accentColor,
-                                        Color.accentColor.opacity(0.78)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .shadow(color: Color.accentColor.opacity(0.28), radius: 8, x: 0, y: 3)
+                            .fill(Color.accentColor)
                     )
                     .overlay {
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -78,16 +68,7 @@ struct ConversationListView: View {
                 .padding(14)
             }
         }
-        .background(
-            LinearGradient(
-                colors: [
-                    Color(nsColor: .windowBackgroundColor),
-                    Color(nsColor: .underPageBackgroundColor).opacity(0.92)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private var groupCount: Int {
@@ -98,17 +79,8 @@ struct ConversationListView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color(red: 0.14, green: 0.16, blue: 0.21),
-                                    Color(red: 0.26, green: 0.29, blue: 0.36)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.accentColor.opacity(0.88))
 
                     CatFaceGlyph(color: Color.white.opacity(0.94))
                         .padding(8)
@@ -132,10 +104,10 @@ struct ConversationListView: View {
             }
         }
         .padding(16)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.8), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.white.opacity(0.28), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
         }
     }
 
@@ -212,14 +184,7 @@ struct ConversationRow: View {
                 .fill(
                     isSelected
                         ? AnyShapeStyle(
-                            LinearGradient(
-                                colors: [
-                                    Color.accentColor.opacity(0.22),
-                                    Color.accentColor.opacity(0.10)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
+                            Color.accentColor.opacity(0.14)
                         )
                         : AnyShapeStyle(Color(nsColor: .textBackgroundColor).opacity(0.55))
                 )
@@ -257,14 +222,8 @@ struct ConversationRow: View {
         return thread.lastTimestamp.formatted(.dateTime.month(.abbreviated).day())
     }
 
-    private var iconBackground: LinearGradient {
-        LinearGradient(
-            colors: thread.type == .group
-                ? [Color.orange.opacity(0.22), Color.red.opacity(0.12)]
-                : [Color.blue.opacity(0.22), Color.cyan.opacity(0.12)],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+    private var iconBackground: Color {
+        thread.type == .group ? Color.orange.opacity(0.16) : Color.blue.opacity(0.16)
     }
 
     private var iconForeground: Color {

@@ -9,15 +9,22 @@ public enum HorizontalDirection: Sendable {
 
 @MainActor
 public final class PetScene: SKScene, @unchecked Sendable {
+    nonisolated public static let activeFramesPerSecond = 60
+
     public let petNode: SKSpriteNode
 
     private var manifest: SpriteManifest
     private let resourceBundle: Bundle
     private let animationKey = "RenderEngine.PetAnimation"
     private let effectKey = "RenderEngine.PetEffect"
+    private let cadenceKey = "RenderEngine.RenderCadence"
     private var spritePackDirectory: URL?
     private var textureCache: [String: SKTexture] = [:]
     private var cachedPlaceholderTexture: SKTexture?
+    private var renderWorkload: RenderWorkload = .staticFrame
+    private var renderingVisible = true
+    private var staticRedrawCoordinator = StaticRedrawCoordinator()
+    private var animationGeneration: UInt = 0
 
     public init(size: CGSize, manifest: SpriteManifest, resourceBundle: Bundle? = nil) {
         self.manifest = manifest
@@ -43,11 +50,35 @@ public final class PetScene: SKScene, @unchecked Sendable {
 
     public override func didMove(to view: SKView) {
         super.didMove(to: view)
-        view.preferredFramesPerSecond = 12
+        requestStaticRedrawIfNeeded()
+    }
+
+    public override func didFinishUpdate() {
+        super.didFinishUpdate()
+
+        guard let settleToken = staticRedrawCoordinator.didFinishUpdate() else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let workload = self.renderWorkload
+            let isVisible = self.renderingVisible
+            guard self.staticRedrawCoordinator.settle(
+                settleToken,
+                workload: workload,
+                isVisible: isVisible
+            ) else {
+                return
+            }
+            self.applyRenderCadence()
+        }
     }
 
     public func playAnimation(for state: AnimationState) {
-        guard let config = manifest.states[state.rawValue] else {
+        if let plan = ActionComboPlanner.plan(for: state) {
+            playActionCombo(plan)
+            return
+        }
+
+        guard let config = animationConfig(for: state) else {
             return
         }
 
@@ -58,10 +89,12 @@ public final class PetScene: SKScene, @unchecked Sendable {
 
         petNode.removeAction(forKey: animationKey)
         petNode.removeAction(forKey: effectKey)
+        petNode.removeAction(forKey: cadenceKey)
         resetNodeTransform()
         petNode.texture = firstTexture
         petNode.size = size  // Fill the scene, not the texture's natural size
-        isPaused = false
+        animationGeneration &+= 1
+        let generation = animationGeneration
 
         let animation = SKAction.animate(
             with: textures,
@@ -69,13 +102,18 @@ public final class PetScene: SKScene, @unchecked Sendable {
             resize: false,
             restore: false
         )
+        let effect = visualEffect(for: state)
+        let repeats = config.loop && state != .idle
+        let restingWorkload: RenderWorkload = repeats
+            ? .spriteLoop(frameCount: textures.count, frameInterval: config.frameInterval)
+            : .staticFrame
+        let activeWorkload: RenderWorkload = effect == nil
+            ? .spriteLoop(frameCount: textures.count, frameInterval: config.frameInterval)
+            : .continuous
+        setRenderWorkload(activeWorkload)
 
         let action: SKAction
-        if state == .idle {
-            action = .sequence([animation, .run { [weak self] in
-                self?.pauseRendering()
-            }])
-        } else if config.loop {
+        if repeats {
             action = .repeatForever(animation)
         } else {
             action = animation
@@ -84,8 +122,303 @@ public final class PetScene: SKScene, @unchecked Sendable {
         petNode.run(action, withKey: animationKey)
 
         // Add visual effects for states that reuse frames
-        if let effect = visualEffect(for: state) {
+        if let effect {
             petNode.run(effect, withKey: effectKey)
+        }
+
+        let shouldScheduleCadenceChange = !repeats || effect != nil
+        if shouldScheduleCadenceChange {
+            let animationDuration = repeats ? 0 : animation.duration
+            let effectDuration = effect?.duration ?? 0
+            let activeDuration = max(animationDuration, effectDuration)
+            let settleCadence = SKAction.run { [weak self] in
+                guard let self, self.animationGeneration == generation else { return }
+                self.setRenderWorkload(restingWorkload)
+            }
+            petNode.run(
+                SKAction.sequence([
+                    .wait(forDuration: activeDuration),
+                    settleCadence
+                ]),
+                withKey: cadenceKey
+            )
+        }
+    }
+
+    public func playActionCombo(for state: AnimationState, count: Int = 1) {
+        guard let plan = ActionComboPlanner.plan(for: state, count: count) else {
+            playAnimation(for: state)
+            return
+        }
+
+        playActionCombo(plan)
+    }
+
+    private func playActionCombo(_ plan: ActionComboPlan) {
+        let segmentActions = plan.segments.compactMap { actionSegment(for: $0) }
+        guard segmentActions.isEmpty == false else {
+            playAnimation(for: .idle)
+            return
+        }
+
+        petNode.removeAction(forKey: animationKey)
+        petNode.removeAction(forKey: effectKey)
+        petNode.removeAction(forKey: cadenceKey)
+        resetNodeTransform()
+        animationGeneration &+= 1
+        let generation = animationGeneration
+        setRenderWorkload(.continuous)
+
+        if let firstState = plan.segments.first?.state,
+           let firstConfig = animationConfig(for: firstState),
+           let firstTexture = loadTextures(from: firstConfig.frames).first {
+            petNode.texture = firstTexture
+            petNode.size = size
+        }
+
+        let finish = SKAction.run { [weak self] in
+            guard let self, self.animationGeneration == generation else { return }
+            self.resetNodeTransform()
+            self.applyInitialTexture()
+            self.setRenderWorkload(.staticFrame)
+        }
+        petNode.run(SKAction.sequence(segmentActions + [finish]), withKey: animationKey)
+    }
+
+    private func actionSegment(for segment: ActionComboSegment) -> SKAction? {
+        guard let config = animationConfig(for: segment.state) else {
+            return nil
+        }
+
+        let textures = loadTextures(from: config.frames)
+        guard textures.isEmpty == false else {
+            return nil
+        }
+
+        let animation = SKAction.animate(
+            with: textures,
+            timePerFrame: config.frameInterval,
+            resize: false,
+            restore: false
+        )
+        let cycleDuration = max(Double(textures.count) * config.frameInterval, 0.01)
+        let repeatCount = max(1, Int(ceil(segment.duration / cycleDuration)))
+        let animationAction = repeatCount > 1 ? SKAction.repeat(animation, count: repeatCount) : animation
+        let plannedAnimationDuration = cycleDuration * Double(repeatCount)
+        if segment.duration > 0 {
+            animationAction.speed = CGFloat(plannedAnimationDuration / segment.duration)
+        }
+
+        let motion = comboMotion(for: segment.state, duration: segment.duration)
+            ?? visualEffect(for: segment.state)
+            ?? SKAction.wait(forDuration: segment.duration)
+        let timedMotion = SKAction.group([
+            animationAction,
+            motion,
+            SKAction.wait(forDuration: segment.duration)
+        ])
+
+        return SKAction.sequence([
+            SKAction.run { [weak self] in
+                self?.resetNodeTransform()
+            },
+            timedMotion
+        ])
+    }
+
+    private func animationConfig(for state: AnimationState) -> SpriteManifest.StateAnimation? {
+        if let config = manifest.states[state.rawValue] {
+            return config
+        }
+
+        for fallbackState in fallbackStates(for: state) where fallbackState != state {
+            if let config = manifest.states[fallbackState.rawValue] {
+                return config
+            }
+        }
+
+        if state != .idle,
+           let config = manifest.states[AnimationState.idle.rawValue] {
+            return config
+        }
+
+        return manifest.states.values.first ?? SpritePackLoader.defaultAnimation(for: state)
+    }
+
+    private func fallbackStates(for state: AnimationState) -> [AnimationState] {
+        switch state {
+        case .danceCombo:
+            return [.dance, .slide, .spin, .sparkle, .idle]
+        case .somersaultCombo:
+            return [.somersault, .angry, .roll, .idle]
+        case .boxingCombo:
+            return [.guardDuty, .pawReach, .punch, .angry, .idle]
+        case .parkourCombo:
+            return [.pounce, .slide, .roll, .spin, .idle]
+        case .partyCombo:
+            return [.sing, .dance, .sparkle, .cheer, .idle]
+        case .trainingCombo:
+            return [.guardDuty, .crouch, .pounce, .boxingCombo, .idle]
+        case .joySpinCombo:
+            return [.celebrate, .spin, .sparkle, .tailWag, .proud, .idle]
+        case .lookAround:
+            return [.walk, .idle]
+        case .somersault:
+            return [.angry, .wave, .idle]
+        case .blink, .sniff, .tailWag:
+            return [.idle]
+        case .pawTap, .crouch, .meditate, .stargaze:
+            return [.sit, .idle]
+        case .pounce, .crawl, .slide:
+            return [.walk, .run, .idle]
+        case .nap, .dream:
+            return [.sleep, .idle]
+        case .beg, .nuzzle, .blush:
+            return [.love, .shy, .sit, .idle]
+        case .surprised:
+            return [.react, .idle]
+        case .proud, .sparkle:
+            return [.cheer, .celebrate, .idle]
+        case .melt:
+            return [.sad, .sleep, .idle]
+        case .sing:
+            return [.chat, .idle]
+        case .coffee:
+            return [.drink, .eat, .idle]
+        case .snack:
+            return [.eat, .drink, .idle]
+        case .pawReach:
+            return [.wave, .idle]
+        case .guardDuty:
+            return [.alert, .idle]
+        default:
+            return [.idle]
+        }
+    }
+
+    private func comboMotion(for state: AnimationState, duration: TimeInterval) -> SKAction? {
+        let baseX = petNode.xScale == 0 ? 1 : petNode.xScale
+        let direction = baseX < 0 ? -1.0 : 1.0
+
+        switch state {
+        case .dance:
+            let step = max(duration / 4, 0.05)
+            return SKAction.sequence([
+                SKAction.group([
+                    SKAction.rotate(toAngle: .pi / 18, duration: step, shortestUnitArc: true),
+                    SKAction.moveBy(x: CGFloat(direction * 4), y: 2, duration: step)
+                ]),
+                SKAction.group([
+                    SKAction.rotate(toAngle: -.pi / 18, duration: step, shortestUnitArc: true),
+                    SKAction.moveBy(x: CGFloat(direction * -8), y: -1, duration: step)
+                ]),
+                SKAction.group([
+                    SKAction.rotate(toAngle: .pi / 20, duration: step, shortestUnitArc: true),
+                    SKAction.moveBy(x: CGFloat(direction * 8), y: 2, duration: step)
+                ]),
+                SKAction.group([
+                    SKAction.rotate(toAngle: 0, duration: step, shortestUnitArc: true),
+                    SKAction.moveBy(x: CGFloat(direction * -4), y: -3, duration: step)
+                ])
+            ])
+
+        case .slide:
+            return SKAction.sequence([
+                SKAction.group([
+                    SKAction.moveBy(x: CGFloat(direction * 14), y: -1, duration: duration * 0.48),
+                    SKAction.scaleY(to: 0.92, duration: duration * 0.48)
+                ]),
+                SKAction.group([
+                    SKAction.moveBy(x: CGFloat(direction * -14), y: 1, duration: duration * 0.52),
+                    SKAction.scaleY(to: 1.0, duration: duration * 0.52)
+                ])
+            ])
+
+        case .spin, .roll:
+            return SKAction.rotate(byAngle: CGFloat(direction) * .pi * 2, duration: duration)
+
+        case .somersault:
+            let flipCount = max(1, Int(round(duration / 0.55)))
+            let flip = SKAction.group([
+                SKAction.rotate(byAngle: CGFloat(direction) * .pi * 2, duration: duration / Double(flipCount)),
+                SKAction.sequence([
+                    SKAction.scaleY(to: 0.86, duration: duration / Double(flipCount) * 0.35),
+                    SKAction.scaleY(to: 1.14, duration: duration / Double(flipCount) * 0.35),
+                    SKAction.scaleY(to: 1.0, duration: duration / Double(flipCount) * 0.30)
+                ])
+            ])
+            return SKAction.repeat(flip, count: flipCount)
+
+        case .punch:
+            let jabOut = SKAction.group([
+                SKAction.moveBy(x: CGFloat(direction * 7), y: 0, duration: duration * 0.35),
+                SKAction.scaleX(to: baseX * 1.12, duration: duration * 0.35)
+            ])
+            let recoil = SKAction.group([
+                SKAction.moveBy(x: CGFloat(direction * -7), y: 0, duration: duration * 0.30),
+                SKAction.scaleX(to: baseX * 0.96, duration: duration * 0.30)
+            ])
+            let settle = SKAction.scaleX(to: baseX, duration: duration * 0.35)
+            return SKAction.sequence([jabOut, recoil, settle])
+
+        case .pawReach:
+            return SKAction.sequence([
+                SKAction.group([
+                    SKAction.moveBy(x: CGFloat(direction * 5), y: 1, duration: duration * 0.45),
+                    SKAction.scaleX(to: baseX * 1.08, duration: duration * 0.45)
+                ]),
+                SKAction.group([
+                    SKAction.moveBy(x: CGFloat(direction * -5), y: -1, duration: duration * 0.55),
+                    SKAction.scaleX(to: baseX, duration: duration * 0.55)
+                ])
+            ])
+
+        case .guardDuty:
+            return SKAction.sequence([
+                SKAction.group([
+                    SKAction.scaleX(to: baseX * 1.06, duration: duration * 0.35),
+                    SKAction.scaleY(to: 0.96, duration: duration * 0.35)
+                ]),
+                SKAction.group([
+                    SKAction.scaleX(to: baseX * 0.98, duration: duration * 0.30),
+                    SKAction.scaleY(to: 1.04, duration: duration * 0.30)
+                ]),
+                SKAction.group([
+                    SKAction.scaleX(to: baseX, duration: duration * 0.35),
+                    SKAction.scaleY(to: 1.0, duration: duration * 0.35)
+                ])
+            ])
+
+        case .pounce:
+            return SKAction.sequence([
+                SKAction.group([
+                    SKAction.scaleX(to: baseX * 1.10, duration: duration * 0.25),
+                    SKAction.scaleY(to: 0.84, duration: duration * 0.25)
+                ]),
+                SKAction.group([
+                    SKAction.moveBy(x: CGFloat(direction * 8), y: 8, duration: duration * 0.40),
+                    SKAction.scaleY(to: 1.12, duration: duration * 0.40)
+                ]),
+                SKAction.group([
+                    SKAction.moveBy(x: CGFloat(direction * -8), y: -8, duration: duration * 0.35),
+                    SKAction.scaleX(to: baseX, duration: duration * 0.35),
+                    SKAction.scaleY(to: 1.0, duration: duration * 0.35)
+                ])
+            ])
+
+        case .tailWag, .sparkle, .cheer, .proud, .blush, .sing, .pawTap:
+            return visualEffect(for: state)
+
+        case .danceCombo, .boxingCombo, .partyCombo, .parkourCombo, .trainingCombo, .joySpinCombo:
+            let pulse = SKAction.sequence([
+                SKAction.scale(to: 1.08, duration: duration * 0.35),
+                SKAction.scale(to: 0.96, duration: duration * 0.25),
+                SKAction.scale(to: 1.0, duration: duration * 0.40)
+            ])
+            return pulse
+
+        default:
+            return nil
         }
     }
 
@@ -181,6 +514,165 @@ public final class PetScene: SKScene, @unchecked Sendable {
             ])
             return SKAction.repeat(sway, count: 2)
 
+        case .blink:
+            return SKAction.sequence([
+                SKAction.scaleY(to: 0.96, duration: 0.08),
+                SKAction.scaleY(to: 1.0, duration: 0.10)
+            ])
+
+        case .sniff:
+            let sniff = SKAction.sequence([
+                SKAction.moveBy(x: 2, y: 0, duration: 0.08),
+                SKAction.moveBy(x: -2, y: 0, duration: 0.08)
+            ])
+            return SKAction.repeat(sniff, count: 3)
+
+        case .tailWag:
+            let currentX = abs(petNode.xScale == 0 ? 1 : petNode.xScale)
+            let wag = SKAction.sequence([
+                SKAction.scaleX(to: currentX * 1.04, duration: 0.08),
+                SKAction.scaleX(to: currentX * 0.96, duration: 0.08)
+            ])
+            return SKAction.repeat(wag, count: 5)
+
+        case .pawTap:
+            let tap = SKAction.sequence([
+                SKAction.moveBy(x: 0, y: -2, duration: 0.06),
+                SKAction.moveBy(x: 0, y: 2, duration: 0.08)
+            ])
+            return SKAction.repeat(tap, count: 3)
+
+        case .pounce:
+            let crouch = SKAction.group([
+                SKAction.scaleX(to: petNode.xScale * 1.08, duration: 0.10),
+                SKAction.scaleY(to: 0.86, duration: 0.10)
+            ])
+            let leap = SKAction.group([
+                SKAction.scaleX(to: petNode.xScale * 0.94, duration: 0.16),
+                SKAction.scaleY(to: 1.12, duration: 0.16),
+                SKAction.moveBy(x: 0, y: 8, duration: 0.16)
+            ])
+            let land = SKAction.group([
+                SKAction.scaleX(to: petNode.xScale, duration: 0.12),
+                SKAction.scaleY(to: 1.0, duration: 0.12),
+                SKAction.moveBy(x: 0, y: -8, duration: 0.12)
+            ])
+            return SKAction.sequence([crouch, leap, land])
+
+        case .crouch:
+            return SKAction.group([
+                SKAction.scaleX(to: petNode.xScale * 1.10, duration: 0.20),
+                SKAction.scaleY(to: 0.78, duration: 0.20),
+                SKAction.moveBy(x: 0, y: -4, duration: 0.20)
+            ])
+
+        case .crawl:
+            let crawl = SKAction.sequence([
+                SKAction.moveBy(x: 3, y: -1, duration: 0.12),
+                SKAction.moveBy(x: -3, y: 1, duration: 0.12)
+            ])
+            return SKAction.repeat(crawl, count: 3)
+
+        case .nap:
+            let breathe = SKAction.sequence([
+                SKAction.scaleY(to: 1.03, duration: 0.45),
+                SKAction.scaleY(to: 1.0, duration: 0.45)
+            ])
+            return SKAction.repeat(breathe, count: 2)
+
+        case .dream:
+            return SKAction.sequence([
+                SKAction.moveBy(x: 0, y: 3, duration: 0.35),
+                SKAction.moveBy(x: 0, y: -3, duration: 0.35)
+            ])
+
+        case .beg, .nuzzle, .blush:
+            let pulse = SKAction.sequence([
+                SKAction.scale(to: 1.06, duration: 0.16),
+                SKAction.scale(to: 1.0, duration: 0.16)
+            ])
+            return SKAction.repeat(pulse, count: 2)
+
+        case .surprised:
+            return SKAction.sequence([
+                SKAction.group([
+                    SKAction.scaleX(to: petNode.xScale * 0.90, duration: 0.05),
+                    SKAction.scaleY(to: 1.16, duration: 0.05),
+                    SKAction.moveBy(x: 0, y: 5, duration: 0.05)
+                ]),
+                SKAction.group([
+                    SKAction.scaleX(to: petNode.xScale, duration: 0.12),
+                    SKAction.scaleY(to: 1.0, duration: 0.12),
+                    SKAction.moveBy(x: 0, y: -5, duration: 0.12)
+                ])
+            ])
+
+        case .proud:
+            return SKAction.sequence([
+                SKAction.scaleY(to: 1.10, duration: 0.18),
+                SKAction.scaleY(to: 1.0, duration: 0.18)
+            ])
+
+        case .melt:
+            return SKAction.group([
+                SKAction.scaleX(to: petNode.xScale * 1.18, duration: 0.35),
+                SKAction.scaleY(to: 0.70, duration: 0.35),
+                SKAction.moveBy(x: 0, y: -7, duration: 0.35)
+            ])
+
+        case .sing:
+            let sing = SKAction.sequence([
+                SKAction.rotate(toAngle: .pi / 18, duration: 0.12, shortestUnitArc: true),
+                SKAction.rotate(toAngle: -.pi / 18, duration: 0.12, shortestUnitArc: true),
+                SKAction.rotate(toAngle: 0, duration: 0.12, shortestUnitArc: true)
+            ])
+            return SKAction.repeat(sing, count: 2)
+
+        case .meditate:
+            return SKAction.sequence([
+                SKAction.moveBy(x: 0, y: 4, duration: 0.45),
+                SKAction.moveBy(x: 0, y: -4, duration: 0.45)
+            ])
+
+        case .coffee, .snack:
+            return SKAction.sequence([
+                SKAction.rotate(toAngle: -.pi / 24, duration: 0.12, shortestUnitArc: true),
+                SKAction.rotate(toAngle: 0, duration: 0.16, shortestUnitArc: true)
+            ])
+
+        case .stargaze:
+            return SKAction.sequence([
+                SKAction.rotate(toAngle: .pi / 30, duration: 0.24, shortestUnitArc: true),
+                SKAction.rotate(toAngle: 0, duration: 0.24, shortestUnitArc: true)
+            ])
+
+        case .sparkle:
+            let sparkle = SKAction.sequence([
+                SKAction.scale(to: 1.10, duration: 0.10),
+                SKAction.scale(to: 0.96, duration: 0.10),
+                SKAction.scale(to: 1.0, duration: 0.08)
+            ])
+            return SKAction.repeat(sparkle, count: 2)
+
+        case .slide:
+            return SKAction.sequence([
+                SKAction.moveBy(x: 10, y: -1, duration: 0.16),
+                SKAction.moveBy(x: -10, y: 1, duration: 0.18)
+            ])
+
+        case .pawReach:
+            return SKAction.sequence([
+                SKAction.scaleX(to: petNode.xScale * 1.08, duration: 0.16),
+                SKAction.scaleX(to: petNode.xScale, duration: 0.14)
+            ])
+
+        case .guardDuty:
+            let guardMotion = SKAction.sequence([
+                SKAction.scaleY(to: 1.05, duration: 0.20),
+                SKAction.scaleY(to: 1.0, duration: 0.20)
+            ])
+            return SKAction.repeat(guardMotion, count: 2)
+
         default:
             return nil
         }
@@ -190,6 +682,7 @@ public final class PetScene: SKScene, @unchecked Sendable {
         let currentXDirection: CGFloat = petNode.xScale < 0 ? -1 : 1
         petNode.xScale = currentXDirection
         petNode.yScale = 1
+        petNode.zRotation = 0
         petNode.position = CGPoint(x: size.width / 2, y: size.height / 2)
     }
 
@@ -269,11 +762,14 @@ public final class PetScene: SKScene, @unchecked Sendable {
 
         petNode.removeAction(forKey: animationKey)
         petNode.removeAction(forKey: effectKey)
+        petNode.removeAction(forKey: cadenceKey)
         resetNodeTransform()
+        animationGeneration &+= 1
+        let generation = animationGeneration
 
         petNode.texture = seriousTexture
         petNode.size = size
-        isPaused = false
+        setRenderWorkload(.continuous)
 
         let facingSign: CGFloat = petNode.xScale < 0 ? -1 : 1
         let facingScale = abs(petNode.xScale == 0 ? 1 : petNode.xScale)
@@ -351,25 +847,73 @@ public final class PetScene: SKScene, @unchecked Sendable {
                 + [SKAction.wait(forDuration: 0.15), restoreSeriousTexture]
         )
 
-        let full = SKAction.sequence([rearUp, braceHold, flipSequence, landing, punchCombo])
+        let finish = SKAction.run { [weak self] in
+            guard let self, self.animationGeneration == generation else { return }
+            self.resetNodeTransform()
+            self.setRenderWorkload(.staticFrame)
+        }
+        let full = SKAction.sequence([rearUp, braceHold, flipSequence, landing, punchCombo, finish])
         petNode.run(full, withKey: animationKey)
     }
 
     public func setFacing(_ direction: HorizontalDirection) {
         let currentScale = abs(petNode.xScale == 0 ? 1 : petNode.xScale)
         petNode.xScale = direction == .left ? -currentScale : currentScale
+        requestStaticRedrawIfNeeded()
     }
 
     public func setRotation(_ angle: CGFloat) {
         petNode.zRotation = angle
+        requestStaticRedrawIfNeeded()
     }
 
     public func pauseRendering() {
-        isPaused = true
+        setRenderWorkload(.staticFrame)
     }
 
     public func resumeRendering() {
-        isPaused = false
+        setRenderWorkload(.continuous)
+    }
+
+    public func setRenderingVisible(_ isVisible: Bool) {
+        guard renderingVisible != isVisible else { return }
+        renderingVisible = isVisible
+        requestStaticRedrawIfNeeded()
+    }
+
+    public func refreshStaticFrame() {
+        requestStaticRedrawIfNeeded()
+    }
+
+    var targetRenderCadence: RenderCadence {
+        RenderCadencePlanner.cadence(for: renderWorkload, isVisible: renderingVisible)
+    }
+
+    private func setRenderWorkload(_ workload: RenderWorkload) {
+        renderWorkload = workload
+        requestStaticRedrawIfNeeded()
+    }
+
+    private func applyRenderCadence() {
+        let cadence = staticRedrawCoordinator.cadenceOverride ?? targetRenderCadence
+        isPaused = cadence.scenePaused
+
+        guard let view else { return }
+        view.preferredFramesPerSecond = cadence.framesPerSecond
+        view.isPaused = cadence.viewPaused
+    }
+
+    private func requestStaticRedrawIfNeeded() {
+        guard view != nil else {
+            staticRedrawCoordinator.cancel()
+            applyRenderCadence()
+            return
+        }
+        staticRedrawCoordinator.requestRedraw(
+            for: renderWorkload,
+            isVisible: renderingVisible
+        )
+        applyRenderCadence()
     }
 
     /// 从当前 manifest 加载语言包文字
@@ -390,7 +934,11 @@ public final class PetScene: SKScene, @unchecked Sendable {
         textureCache.removeAll()
         cachedPlaceholderTexture = nil
         petNode.removeAction(forKey: animationKey)
+        petNode.removeAction(forKey: effectKey)
+        petNode.removeAction(forKey: cadenceKey)
+        animationGeneration &+= 1
         applyInitialTexture()
+        setRenderWorkload(.staticFrame)
     }
 
     private func applyInitialTexture() {

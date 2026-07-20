@@ -24,17 +24,19 @@ public final class ChatViewModel {
     public private(set) var aiStatus: AIEngineStatus = .notConfigured
     public private(set) var isStreaming = false
     private var messagesByConversation: [String: [ChatMessage]] = [:]
+    @ObservationIgnored private var activeSendTask: Task<Void, Never>?
+    @ObservationIgnored private var activeSendConversationId: String?
     // Per-message capture of the "show thinking" toggle at the moment the
     // message first lands in the view model. The toggle in ChatView only
     // affects messages appended *after* it changes — historical messages keep
     // whatever value was current when they were captured.
     @ObservationIgnored private var capturedShowThinking: [UUID: Bool] = [:]
 
-    private let sendToAI: @Sendable (String, [ChatMessage]) async throws -> AsyncThrowingStream<String, Error>
+    private let sendToAI: @Sendable (String, String, [ChatMessage]) async throws -> AsyncThrowingStream<String, Error>
     private let getAIStatus: @Sendable () async -> AIEngineStatus
 
-    public var onUserSent: (@MainActor () -> Void)?
-    public var onAssistantReplied: (@MainActor () -> Void)?
+    public var onUserSent: (@MainActor (_ conversationId: String, _ message: ChatMessage) -> Void)?
+    public var onAssistantReplied: (@MainActor (_ conversationId: String, _ message: ChatMessage) -> Void)?
     public var onConversationChanged: ((String) -> Void)?
     public var onCreateGroup: ((String, [UUID]) -> Void)?
     public var onDeleteConversation: (@MainActor (String) -> Void)?
@@ -43,7 +45,7 @@ public final class ChatViewModel {
     public var onSlashCommand: (@MainActor (_ name: String, _ arguments: String) async -> Bool)?
 
     public init(
-        sendToAI: @escaping @Sendable (String, [ChatMessage]) async throws -> AsyncThrowingStream<String, Error> = { _, _ in
+        sendToAI: @escaping @Sendable (String, String, [ChatMessage]) async throws -> AsyncThrowingStream<String, Error> = { _, _, _ in
             AsyncThrowingStream { continuation in
                 continuation.finish()
             }
@@ -64,6 +66,9 @@ public final class ChatViewModel {
             return
         }
         ensureSelectedConversation()
+        guard let conversationId = selectedConversationId else {
+            return
+        }
         inputText = ""
 
         if let command = Self.parseSlashCommand(from: trimmedInput), let handler = onSlashCommand {
@@ -75,33 +80,42 @@ public final class ChatViewModel {
         }
 
         let userMessage = ChatMessage(role: .user, content: trimmedInput)
-        appendToCurrentConversation(userMessage)
-        onUserSent?()
+        append(userMessage, to: conversationId)
+        let aiHistory = messagesByConversation[conversationId] ?? []
+        onUserSent?(conversationId, userMessage)
 
-        Task { @MainActor in
-            let aiHistory = currentMessages
+        isStreaming = true
+        activeSendConversationId = conversationId
+        activeSendTask = Task { @MainActor in
+            defer {
+                isStreaming = false
+                activeSendConversationId = nil
+                activeSendTask = nil
+            }
+
+            guard !Task.isCancelled else {
+                return
+            }
             aiStatus = await getAIStatus()
-
-            guard aiStatus == .ready else {
-                appendToCurrentConversation(ChatMessage(role: .assistant, content: L10n.chatAssistantNotConfigured))
+            guard !Task.isCancelled else {
                 return
             }
 
-            isStreaming = true
-            defer {
-                isStreaming = false
+            guard aiStatus == .ready else {
+                append(
+                    ChatMessage(role: .assistant, content: L10n.chatAssistantNotConfigured),
+                    to: conversationId
+                )
+                return
             }
 
-            var assistantMessage = ChatMessage(role: .assistant, content: "")
-            appendToCurrentConversation(assistantMessage)
+            let assistantMessage = ChatMessage(role: .assistant, content: "")
+            append(assistantMessage, to: conversationId)
 
             do {
-                let stream = try await sendToAI(trimmedInput, aiHistory)
-                let clock = ContinuousClock()
-                let streamingFlushInterval: Duration = .milliseconds(40)
+                try Task.checkCancellation()
+                let stream = try await sendToAI(conversationId, trimmedInput, aiHistory)
                 var bufferedReply = ""
-                var pendingChunk = ""
-                var lastFlush = clock.now
 
                 func assistantMessageWithContent(_ content: String) -> ChatMessage {
                     ChatMessage(
@@ -114,53 +128,52 @@ public final class ChatViewModel {
                     )
                 }
 
-                for try await chunk in stream {
-                    guard let currentAssistantMessage = currentMessages.last else {
-                        break
-                    }
-                    assistantMessage = currentAssistantMessage
-                    pendingChunk += chunk
-                    let now = clock.now
-                    if now - lastFlush >= streamingFlushInterval {
-                        bufferedReply += pendingChunk
-                        pendingChunk.removeAll(keepingCapacity: true)
-                        lastFlush = now
-
-                        replaceLastMessageInCurrentConversation(
-                            with: assistantMessageWithContent(bufferedReply),
-                            updatesPreview: false
-                        )
-                    }
-                }
-
-                if !pendingChunk.isEmpty {
-                    bufferedReply += pendingChunk
-                    pendingChunk.removeAll(keepingCapacity: true)
-                    replaceLastMessageInCurrentConversation(
+                // Consume the token-heavy upstream stream away from MainActor.
+                // Only the newest accumulated snapshot crosses back to the UI,
+                // so a busy render pass naturally drops stale intermediate text.
+                for try await snapshot in StreamingTextBatcher.snapshots(from: stream) {
+                    bufferedReply = snapshot
+                    replaceMessage(
+                        id: assistantMessage.id,
+                        in: conversationId,
                         with: assistantMessageWithContent(bufferedReply),
                         updatesPreview: false
                     )
                 }
-                if let currentAssistantMessage = currentMessages.last {
-                    assistantMessage = currentAssistantMessage
-                    replaceLastMessageInCurrentConversation(
-                        with: assistantMessageWithContent(bufferedReply),
-                        updatesPreview: true
-                    )
-                }
+                try Task.checkCancellation()
 
-                onAssistantReplied?()
-            } catch {
-                replaceLastMessageInCurrentConversation(with: ChatMessage(
+                let completedMessage = assistantMessageWithContent(bufferedReply)
+                let didStoreReply = replaceMessage(
                     id: assistantMessage.id,
-                    role: .assistant,
-                    content: "Error: \(error.localizedDescription)",
-                    timestamp: assistantMessage.timestamp,
-                    petId: assistantMessage.petId,
-                    petName: assistantMessage.petName
-                ))
+                    in: conversationId,
+                    with: completedMessage,
+                    updatesPreview: true
+                )
+
+                if didStoreReply {
+                    onAssistantReplied?(conversationId, completedMessage)
+                }
+            } catch is CancellationError where Task.isCancelled {
+                finalizeCancelledMessage(id: assistantMessage.id, in: conversationId)
+            } catch {
+                replaceMessage(
+                    id: assistantMessage.id,
+                    in: conversationId,
+                    with: ChatMessage(
+                        id: assistantMessage.id,
+                        role: .assistant,
+                        content: "Error: \(error.localizedDescription)",
+                        timestamp: assistantMessage.timestamp,
+                        petId: assistantMessage.petId,
+                        petName: assistantMessage.petName
+                    )
+                )
             }
         }
+    }
+
+    public func cancelStreaming() {
+        activeSendTask?.cancel()
     }
 
     public func addExternalMessage(_ content: String) {
@@ -235,6 +248,9 @@ public final class ChatViewModel {
     }
 
     public func deleteConversation(_ id: String) {
+        if activeSendConversationId == id {
+            cancelStreaming()
+        }
         conversations.removeAll { $0.id == id }
         messagesByConversation[id] = nil
         onDeleteConversation?(id)
@@ -304,12 +320,20 @@ public final class ChatViewModel {
         guard let id = selectedConversationId else {
             return
         }
+        append(message, to: id)
+    }
+
+    private func append(_ message: ChatMessage, to conversationId: String) {
+        guard var messages = messagesByConversation[conversationId] else {
+            return
+        }
         captureShowThinkingIfNeeded(for: message.id)
-        // Single write to currentMessages (the @Observable source of truth);
-        // sync the dict afterward without triggering another view-tree update.
-        currentMessages.append(message)
-        messagesByConversation[id] = currentMessages
-        updateConversationPreview(for: id, using: message)
+        messages.append(message)
+        messagesByConversation[conversationId] = messages
+        if selectedConversationId == conversationId {
+            currentMessages = messages
+        }
+        updateConversationPreview(for: conversationId, using: message)
     }
 
     /// 用清理后的内容替换最后一条助手消息（用于剥离 [ACTION:...] 标签）。
@@ -327,9 +351,30 @@ public final class ChatViewModel {
             petId: last.petId,
             petName: last.petName
         )
-        currentMessages[currentMessages.count - 1] = updated
-        messagesByConversation[id] = currentMessages
-        updateConversationPreview(for: id, using: updated)
+        replaceMessage(id: last.id, in: id, with: updated)
+    }
+
+    public func replaceAssistantContent(
+        _ content: String,
+        messageId: UUID,
+        conversationId: String
+    ) {
+        guard let original = messagesByConversation[conversationId]?.first(where: { $0.id == messageId }),
+              original.role == .assistant else {
+            return
+        }
+        replaceMessage(
+            id: messageId,
+            in: conversationId,
+            with: ChatMessage(
+                id: original.id,
+                role: original.role,
+                content: content,
+                timestamp: original.timestamp,
+                petId: original.petId,
+                petName: original.petName
+            )
+        )
     }
 
     /// Returns the captured "show thinking" value for a given message. Falls
@@ -352,23 +397,32 @@ public final class ChatViewModel {
         UserDefaults.standard.object(forKey: "chat.showThinking") as? Bool ?? true
     }
 
-    private func replaceLastMessageInCurrentConversation(with message: ChatMessage, updatesPreview: Bool = true) {
-        guard let id = selectedConversationId,
-              !currentMessages.isEmpty else {
-            return
+    @discardableResult
+    private func replaceMessage(
+        id messageId: UUID,
+        in conversationId: String,
+        with message: ChatMessage,
+        updatesPreview: Bool = true
+    ) -> Bool {
+        guard var messages = messagesByConversation[conversationId],
+              let messageIndex = messages.firstIndex(where: { $0.id == messageId }) else {
+            return false
         }
-        let lastIndex = currentMessages.count - 1
-        if currentMessages[lastIndex] == message {
+        if messages[messageIndex] == message {
             if updatesPreview {
-                updateConversationPreview(for: id, using: message)
+                updateConversationPreview(for: conversationId, using: message)
             }
-            return
+            return true
         }
-        currentMessages[lastIndex] = message
-        messagesByConversation[id] = currentMessages
+        messages[messageIndex] = message
+        messagesByConversation[conversationId] = messages
+        if selectedConversationId == conversationId {
+            currentMessages = messages
+        }
         if updatesPreview {
-            updateConversationPreview(for: id, using: message)
+            updateConversationPreview(for: conversationId, using: message)
         }
+        return true
     }
 
     private func updateConversationPreview(for conversationId: String, using message: ChatMessage) {
@@ -388,6 +442,24 @@ public final class ChatViewModel {
         }
         conversations[index].lastMessage = newPreview
         conversations[index].lastTimestamp = message.timestamp
+    }
+
+    private func finalizeCancelledMessage(id messageId: UUID, in conversationId: String) {
+        guard var messages = messagesByConversation[conversationId],
+              let messageIndex = messages.firstIndex(where: { $0.id == messageId }) else {
+            return
+        }
+        let message = messages[messageIndex]
+        if message.content.isEmpty {
+            messages.remove(at: messageIndex)
+            messagesByConversation[conversationId] = messages
+            capturedShowThinking[messageId] = nil
+            if selectedConversationId == conversationId {
+                currentMessages = messages
+            }
+        } else {
+            updateConversationPreview(for: conversationId, using: message)
+        }
     }
 
     private func ensureSelectedConversation() {

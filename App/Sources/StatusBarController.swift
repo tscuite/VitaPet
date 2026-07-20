@@ -38,6 +38,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let miniGamesMenuItem = NSMenuItem(title: "小游戏", action: nil, keyEquivalent: "")
     private let pomodoroMenuItem = NSMenuItem(title: "番茄钟", action: nil, keyEquivalent: "")
     private let petSizeMenuItem = NSMenuItem(title: L10n.menuPetSize, action: nil, keyEquivalent: "")
+    private var cachedMiniGameNames: [String]?
+    #if DEBUG
+    private var cachedDebugBehaviorNames: [String]?
+    #endif
     var onStartGame: ((String) -> Void)?
     var availableMiniGames: (() -> [String])?
     private var petSizeOptions: [(title: String, size: CGFloat)] {
@@ -236,9 +240,14 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private func updateMiniGamesMenu(in menu: NSMenu) {
         guard let gameItem = menu.items.first(where: { $0.tag == 997 }) else { return }
 
-        let submenu = NSMenu(title: "小游戏")
         let games = availableMiniGames?() ?? []
+        if cachedMiniGameNames == games, gameItem.submenu != nil {
+            gameItem.isEnabled = !games.isEmpty
+            return
+        }
 
+        cachedMiniGameNames = games
+        let submenu = NSMenu(title: "小游戏")
         if games.isEmpty {
             let item = NSMenuItem(title: "暂无可用小游戏", action: nil, keyEquivalent: "")
             item.isEnabled = false
@@ -385,6 +394,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     private func updateDebugMenu(in menu: NSMenu) {
         guard let debugItem = menu.items.first(where: { $0.tag == 998 }) else { return }
+        let behaviorNames = debugListBehaviors()
+        if cachedDebugBehaviorNames == behaviorNames, debugItem.submenu?.items.isEmpty == false {
+            return
+        }
+
+        cachedDebugBehaviorNames = behaviorNames
         let submenu = NSMenu(title: "Debug")
 
         // ── Animations ──
@@ -409,7 +424,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         behaviorHeader.image = NSImage(systemSymbolName: "bolt", accessibilityDescription: nil)
         submenu.addItem(behaviorHeader)
         let boltImage = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: nil)
-        for name in debugListBehaviors() {
+        for name in behaviorNames {
             let item = NSMenuItem(title: name, action: #selector(debugBehaviorAction(_:)), keyEquivalent: "")
             item.target = self
             item.image = boltImage

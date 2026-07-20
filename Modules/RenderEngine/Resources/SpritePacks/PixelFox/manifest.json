@@ -1,565 +1,1046 @@
 {
-  "language": {
-    "alert": [
+  "language" : {
+    "alert" : [
       "！注意！",
       "有情况！"
     ],
-    "angry": [
+    "angry" : [
       "哼！",
       "生气了！",
       "别惹我！"
     ],
-    "bounce": [
+    "beg" : [
+      "可以陪我玩吗？",
+      "求关注~"
+    ],
+    "blink" : [
+      "眨眨眼~",
+      "看到你啦。"
+    ],
+    "blush" : [
+      "有点害羞。",
+      "嘿嘿。"
+    ],
+    "bounce" : [
       "蹦蹦跳~",
       "弹起来！"
     ],
-    "bubbleTexts": [
+    "boxingCombo" : [
+      "拳击连招！",
+      "防守、试探、出拳。"
+    ],
+    "bubbleTexts" : [
       "嘿！",
       "别戳我啦~",
       "呀~",
       "有什么事吗？"
     ],
-    "celebrate": [
+    "celebrate" : [
       "耶！🎉",
       "太棒了！",
       "开心！"
     ],
-    "chat": [
+    "chat" : [
       "呀~",
       "然后呢？",
       "有意思~"
     ],
-    "climb": [
+    "climb" : [
       "爬上去！",
       "好高~"
     ],
-    "confused": [
+    "coffee" : [
+      "补充能量。",
+      "喝一口。"
+    ],
+    "confused" : [
       "？？？",
       "什么情况？"
     ],
-    "dance": [
+    "crawl" : [
+      "慢慢爬行。",
+      "低调靠近。"
+    ],
+    "crouch" : [
+      "悄悄蹲下。",
+      "准备出发。"
+    ],
+    "dance" : [
       "跳舞~♪",
       "嗨起来！",
       "♪♪♪"
     ],
-    "doubleClickTexts": [
+    "danceCombo" : [
+      "来一段连舞！",
+      "转身、滑步、闪亮收尾。"
+    ],
+    "doubleClickTexts" : [
       "太开心啦！",
       "好喜欢你！",
       "嘻嘻~",
       "尾巴摇起来~"
     ],
-    "drink": [
+    "dream" : [
+      "做了个甜梦。",
+      "梦里也在陪你。"
+    ],
+    "drink" : [
       "咕噜咕噜~",
       "好渴~"
     ],
-    "eat": [
+    "eat" : [
       "好吃！",
       "还要还要！",
       "美味~",
       "吃饱啦~"
     ],
-    "gift": [
+    "gift" : [
       "送你~🎁",
       "收下吧！"
     ],
-    "groom": [
+    "groom" : [
       "舔舔~",
       "尾巴要蓬松~",
       "整理毛毛~"
     ],
-    "headShake": [
+    "guard" : [
+      "我来守着。",
+      "保持警戒。"
+    ],
+    "headShake" : [
       "不要！",
       "才不呢~"
     ],
-    "idle": [
+    "idle" : [
       "呀~",
       "...",
       "好无聊...",
       "想去探险~"
     ],
-    "lookAround": [
+    "joySpinCombo" : [
+      "开心到转圈圈！",
+      "转一圈，闪一下。"
+    ],
+    "lookAround" : [
       "看看~",
       "有猎物？"
     ],
-    "love": [
+    "love" : [
       "❤️",
       "好喜欢~",
       "蹭蹭尾巴~"
     ],
-    "nod": [
+    "meditate" : [
+      "安静一下。",
+      "保持平衡。"
+    ],
+    "melt" : [
+      "软掉了。",
+      "需要一点安慰。"
+    ],
+    "nap" : [
+      "小睡一下。",
+      "呼噜呼噜。"
+    ],
+    "nod" : [
       "嗯嗯！",
       "同意！"
     ],
-    "peek": [
+    "nuzzle" : [
+      "蹭蹭你。",
+      "贴贴。"
+    ],
+    "parkourCombo" : [
+      "跑酷连招！",
+      "扑跃、滑步、翻滚一气呵成。"
+    ],
+    "partyCombo" : [
+      "派对表演时间！",
+      "唱歌跳舞再闪一下。"
+    ],
+    "pawReach" : [
+      "伸爪爪。",
+      "够一下。"
+    ],
+    "pawTap" : [
+      "拍拍你。",
+      "注意到我了吗？"
+    ],
+    "peek" : [
       "偷看一下~",
       "嘿嘿~"
     ],
-    "phone": [
+    "phone" : [
       "谁的消息？",
       "刷刷手机~"
     ],
-    "play": [
+    "play" : [
       "好好玩！",
       "再来一次！",
       "嘿嘿~"
     ],
-    "react": [
+    "pounce" : [
+      "扑过去！",
+      "抓到啦！"
+    ],
+    "proud" : [
+      "我很厉害吧。",
+      "挺胸！"
+    ],
+    "react" : [
       "！",
       "什么！",
       "嗯？"
     ],
-    "read": [
+    "read" : [
       "好有趣~",
       "看书中~"
     ],
-    "roll": [
+    "roll" : [
       "滚来滚去~",
       "咕噜~"
     ],
-    "run": [
+    "run" : [
       "冲啊！",
       "追不上我~",
       "跑起来！"
     ],
-    "sad": [
+    "sad" : [
       "呜呜...",
       "不开心...",
       "尾巴垂下来了..."
     ],
-    "scared": [
+    "scared" : [
       "好可怕！",
       "救命！",
       "毛炸了！"
     ],
-    "scratch": [
+    "scratch" : [
       "痒痒~",
       "挠挠~"
     ],
-    "shy": [
+    "shy" : [
       "害羞...",
       "别看我的尾巴..."
     ],
-    "sit": [
+    "sing" : [
+      "啦啦啦~",
+      "唱给你听。"
+    ],
+    "sit" : [
       "坐坐~",
       "休息一下~"
     ],
-    "sleep": [
+    "sleep" : [
       "💤",
       "好困...",
       "zzZ~",
       "别吵..."
     ],
-    "sneeze": [
+    "slide" : [
+      "滑过去。",
+      "咻~"
+    ],
+    "snack" : [
+      "吃点小零食。",
+      "好吃！"
+    ],
+    "sneeze" : [
       "阿嚏！",
       "哈啾~"
     ],
-    "spin": [
+    "sniff" : [
+      "闻闻看~",
+      "这里有新味道。"
+    ],
+    "somersaultCombo" : [
+      "翻跟头连招启动！",
+      "落地接一记帅气收势。"
+    ],
+    "sparkle" : [
+      "闪亮登场！",
+      "发光中。"
+    ],
+    "spin" : [
       "转圈圈~",
       "尾巴也转~"
     ],
-    "stretch": [
+    "stargaze" : [
+      "看看星星。",
+      "今天也很亮。"
+    ],
+    "stretch" : [
       "伸懒腰~",
       "好舒服~"
     ],
-    "think": [
+    "surprised" : [
+      "哇！",
+      "发生什么啦？"
+    ],
+    "tailWag" : [
+      "开心摇摇！",
+      "尾巴停不下来。"
+    ],
+    "think" : [
       "嗯...",
       "让我想想...",
       "狐狸的智慧..."
     ],
-    "trip": [
+    "trainingCombo" : [
+      "训练连招！",
+      "热身、扑跃、出拳、得意收尾。"
+    ],
+    "trip" : [
       "哎呀！",
       "尾巴绊到了..."
     ],
-    "type": [
+    "type" : [
       "噼里啪啦~",
       "打字中..."
     ],
-    "walk": [
+    "walk" : [
       "走走~",
       "探险去~",
       "这边看看~"
     ],
-    "wave": [
+    "wave" : [
       "嗨！你好~",
       "拜拜~"
     ],
-    "write": [
+    "write" : [
       "写写写~",
       "灵感来了！"
     ],
-    "yawn": [
+    "yawn" : [
       "哈欠~",
       "好困呀~"
     ]
   },
-  "name": "PixelFox",
-  "states": {
-    "alert": {
-      "frameInterval": 0.2,
-      "frames": [
+  "name" : "PixelFox",
+  "sounds" : {
+    "alert" : "sounds/alert.wav",
+    "angry" : "sounds/angry.wav",
+    "bounce" : "sounds/bounce.wav",
+    "celebrate" : "sounds/celebrate.wav",
+    "chat" : "sounds/chat.wav",
+    "cheer" : "sounds/cheer.wav",
+    "confused" : "sounds/confused.wav",
+    "dance" : "sounds/dance.wav",
+    "drink" : "sounds/drink.wav",
+    "eat" : "sounds/eat.wav",
+    "gift" : "sounds/gift.wav",
+    "land" : "sounds/land.wav",
+    "love" : "sounds/love.wav",
+    "phone" : "sounds/phone.wav",
+    "play" : "sounds/play.wav",
+    "react" : "sounds/react.wav",
+    "read" : "sounds/read.wav",
+    "roll" : "sounds/roll.wav",
+    "run" : "sounds/run.wav",
+    "sad" : "sounds/sad.wav",
+    "scared" : "sounds/scared.wav",
+    "scratch" : "sounds/scratch.wav",
+    "shy" : "sounds/shy.wav",
+    "sit" : "sounds/sit.wav",
+    "sleep" : "sounds/sleep.wav",
+    "sneeze" : "sounds/sneeze.wav",
+    "spin" : "sounds/spin.wav",
+    "trip" : "sounds/trip.wav",
+    "type" : "sounds/type.wav",
+    "walk" : "sounds/walk.wav",
+    "write" : "sounds/write.wav",
+    "yawn" : "sounds/yawn.wav"
+  },
+  "states" : {
+    "alert" : {
+      "frameInterval" : 0.20000000000000001,
+      "frames" : [
         "fox_alert_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "angry": {
-      "frameInterval": 0.3,
-      "frames": [
+    "angry" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "fox_angry_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "bounce": {
-      "frameInterval": 0.12,
-      "frames": [
+    "beg" : {
+      "frameInterval" : 0.14000000000000001,
+      "frames" : [
+        "fox_beg_0",
+        "fox_beg_1",
+        "fox_beg_2",
+        "fox_beg_3"
+      ],
+      "loop" : false
+    },
+    "blink" : {
+      "frameInterval" : 0.089999999999999997,
+      "frames" : [
+        "fox_blink_0",
+        "fox_blink_1",
+        "fox_blink_2",
+        "fox_blink_3"
+      ],
+      "loop" : false
+    },
+    "blush" : {
+      "frameInterval" : 0.17999999999999999,
+      "frames" : [
+        "fox_blush_0",
+        "fox_blush_1",
+        "fox_blush_2",
+        "fox_blush_3"
+      ],
+      "loop" : false
+    },
+    "bounce" : {
+      "frameInterval" : 0.12,
+      "frames" : [
         "fox_bounce_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "celebrate": {
-      "frameInterval": 0.12,
-      "frames": [
+    "boxingCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "fox_guard_0",
+        "fox_guard_2",
+        "fox_pawTap_0",
+        "fox_pawReach_0",
+        "fox_angry_0",
+        "fox_pawReach_2",
+        "fox_proud_0"
+      ],
+      "loop" : false
+    },
+    "celebrate" : {
+      "frameInterval" : 0.12,
+      "frames" : [
         "fox_celebrate_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "chat": {
-      "frameInterval": 0.3,
-      "frames": [
+    "chat" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "fox_chat_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "cheer": {
-      "frameInterval": 0.15,
-      "frames": [
+    "cheer" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "fox_cheer_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "climb": {
-      "frameInterval": 0.2,
-      "frames": [
+    "climb" : {
+      "frameInterval" : 0.20000000000000001,
+      "frames" : [
         "fox_climb_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "confused": {
-      "frameInterval": 0.3,
-      "frames": [
+    "coffee" : {
+      "frameInterval" : 0.22,
+      "frames" : [
+        "fox_coffee_0",
+        "fox_coffee_1",
+        "fox_coffee_2",
+        "fox_coffee_3"
+      ],
+      "loop" : false
+    },
+    "confused" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "fox_confused_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "dance": {
-      "frameInterval": 0.15,
-      "frames": [
+    "crawl" : {
+      "frameInterval" : 0.12,
+      "frames" : [
+        "fox_crawl_0",
+        "fox_crawl_1",
+        "fox_crawl_2",
+        "fox_crawl_3"
+      ],
+      "loop" : false
+    },
+    "crouch" : {
+      "frameInterval" : 0.14000000000000001,
+      "frames" : [
+        "fox_crouch_0",
+        "fox_crouch_1",
+        "fox_crouch_2"
+      ],
+      "loop" : false
+    },
+    "dance" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "fox_dance_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "drag": {
-      "frameInterval": 0.25,
-      "frames": [
+    "danceCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "fox_dance_0",
+        "fox_slide_0",
+        "fox_slide_1",
+        "fox_spin_0",
+        "fox_tailWag_0",
+        "fox_tailWag_2",
+        "fox_sparkle_0",
+        "fox_sparkle_3",
+        "fox_proud_0"
+      ],
+      "loop" : false
+    },
+    "drag" : {
+      "frameInterval" : 0.25,
+      "frames" : [
         "fox_drag_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "drink": {
-      "frameInterval": 0.35,
-      "frames": [
+    "dream" : {
+      "frameInterval" : 0.32000000000000001,
+      "frames" : [
+        "fox_dream_0",
+        "fox_dream_1",
+        "fox_dream_2",
+        "fox_dream_3"
+      ],
+      "loop" : false
+    },
+    "drink" : {
+      "frameInterval" : 0.34999999999999998,
+      "frames" : [
         "fox_drink_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "eat": {
-      "frameInterval": 0.35,
-      "frames": [
+    "eat" : {
+      "frameInterval" : 0.34999999999999998,
+      "frames" : [
         "fox_eat_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "follow": {
-      "frameInterval": 0.08,
-      "frames": [
+    "follow" : {
+      "frameInterval" : 0.080000000000000002,
+      "frames" : [
         "fox_follow_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "gift": {
-      "frameInterval": 0.4,
-      "frames": [
+    "gift" : {
+      "frameInterval" : 0.40000000000000002,
+      "frames" : [
         "fox_gift_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "groom": {
-      "frameInterval": 0.4,
-      "frames": [
+    "groom" : {
+      "frameInterval" : 0.40000000000000002,
+      "frames" : [
         "fox_groom_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "headShake": {
-      "frameInterval": 0.2,
-      "frames": [
+    "guard" : {
+      "frameInterval" : 0.22,
+      "frames" : [
+        "fox_guard_0",
+        "fox_guard_1",
+        "fox_guard_2",
+        "fox_guard_3"
+      ],
+      "loop" : true
+    },
+    "headShake" : {
+      "frameInterval" : 0.20000000000000001,
+      "frames" : [
         "fox_headShake_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "hidePeek": {
-      "frameInterval": 0.3,
-      "frames": [
+    "hidePeek" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "fox_hidePeek_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "idle": {
-      "frameInterval": 0.5,
-      "frames": [
+    "idle" : {
+      "frameInterval" : 0.5,
+      "frames" : [
         "fox_idle_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "land": {
-      "frameInterval": 0.1,
-      "frames": [
+    "joySpinCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "fox_celebrate_0",
+        "fox_spin_0",
+        "fox_sparkle_0",
+        "fox_sparkle_2",
+        "fox_tailWag_0",
+        "fox_tailWag_3",
+        "fox_proud_0"
+      ],
+      "loop" : false
+    },
+    "land" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
         "fox_land_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "listen": {
-      "frameInterval": 0.2,
-      "frames": [
+    "listen" : {
+      "frameInterval" : 0.20000000000000001,
+      "frames" : [
         "fox_listen_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "love": {
-      "frameInterval": 0.3,
-      "frames": [
+    "lookAround" : {
+      "frameInterval" : 0.34999999999999998,
+      "frames" : [
+        "fox_walk_0",
+        "fox_walk_1"
+      ],
+      "loop" : false
+    },
+    "love" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "fox_love_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "nod": {
-      "frameInterval": 0.2,
-      "frames": [
+    "meditate" : {
+      "frameInterval" : 0.41999999999999998,
+      "frames" : [
+        "fox_meditate_0",
+        "fox_meditate_1",
+        "fox_meditate_2",
+        "fox_meditate_3"
+      ],
+      "loop" : true
+    },
+    "melt" : {
+      "frameInterval" : 0.17999999999999999,
+      "frames" : [
+        "fox_melt_0",
+        "fox_melt_1",
+        "fox_melt_2",
+        "fox_melt_3"
+      ],
+      "loop" : false
+    },
+    "nap" : {
+      "frameInterval" : 0.55000000000000004,
+      "frames" : [
+        "fox_nap_0",
+        "fox_nap_1",
+        "fox_nap_2",
+        "fox_nap_3"
+      ],
+      "loop" : true
+    },
+    "nod" : {
+      "frameInterval" : 0.20000000000000001,
+      "frames" : [
         "fox_nod_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "peek": {
-      "frameInterval": 0.3,
-      "frames": [
+    "nuzzle" : {
+      "frameInterval" : 0.14000000000000001,
+      "frames" : [
+        "fox_nuzzle_0",
+        "fox_nuzzle_1",
+        "fox_nuzzle_2",
+        "fox_nuzzle_3"
+      ],
+      "loop" : false
+    },
+    "parkourCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "fox_pounce_0",
+        "fox_pounce_2",
+        "fox_slide_0",
+        "fox_slide_2",
+        "fox_roll_0",
+        "fox_spin_0",
+        "fox_land_0",
+        "fox_cheer_0"
+      ],
+      "loop" : false
+    },
+    "partyCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "fox_sing_0",
+        "fox_sing_3",
+        "fox_dance_0",
+        "fox_sparkle_0",
+        "fox_sparkle_3",
+        "fox_cheer_0",
+        "fox_tailWag_0",
+        "fox_tailWag_3",
+        "fox_blush_0"
+      ],
+      "loop" : false
+    },
+    "pawReach" : {
+      "frameInterval" : 0.12,
+      "frames" : [
+        "fox_pawReach_0",
+        "fox_pawReach_1",
+        "fox_pawReach_2",
+        "fox_pawReach_3"
+      ],
+      "loop" : false
+    },
+    "pawTap" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "fox_pawTap_0",
+        "fox_pawTap_1",
+        "fox_pawTap_2",
+        "fox_pawTap_3"
+      ],
+      "loop" : false
+    },
+    "peek" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "fox_peek_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "phone": {
-      "frameInterval": 0.4,
-      "frames": [
+    "phone" : {
+      "frameInterval" : 0.40000000000000002,
+      "frames" : [
         "fox_phone_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "pickup": {
-      "frameInterval": 0.25,
-      "frames": [
+    "pickup" : {
+      "frameInterval" : 0.25,
+      "frames" : [
         "fox_pickup_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "play": {
-      "frameInterval": 0.15,
-      "frames": [
+    "play" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "fox_play_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "react": {
-      "frameInterval": 0.15,
-      "frames": [
+    "pounce" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "fox_pounce_0",
+        "fox_pounce_1",
+        "fox_pounce_2",
+        "fox_pounce_3"
+      ],
+      "loop" : false
+    },
+    "proud" : {
+      "frameInterval" : 0.16,
+      "frames" : [
+        "fox_proud_0",
+        "fox_proud_1",
+        "fox_proud_2",
+        "fox_proud_3"
+      ],
+      "loop" : false
+    },
+    "punch" : {
+      "frameInterval" : 0.14000000000000001,
+      "frames" : [
+        "fox_angry_0"
+      ],
+      "loop" : false
+    },
+    "react" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "fox_react_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "read": {
-      "frameInterval": 0.4,
-      "frames": [
+    "read" : {
+      "frameInterval" : 0.40000000000000002,
+      "frames" : [
         "fox_read_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "roll": {
-      "frameInterval": 0.12,
-      "frames": [
+    "roll" : {
+      "frameInterval" : 0.12,
+      "frames" : [
         "fox_roll_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "run": {
-      "frameInterval": 0.08,
-      "frames": [
+    "run" : {
+      "frameInterval" : 0.080000000000000002,
+      "frames" : [
         "fox_run_0",
         "fox_run_1"
       ],
-      "loop": true
+      "loop" : true
     },
-    "sad": {
-      "frameInterval": 0.5,
-      "frames": [
+    "sad" : {
+      "frameInterval" : 0.5,
+      "frames" : [
         "fox_sad_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "scared": {
-      "frameInterval": 0.15,
-      "frames": [
+    "scared" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "fox_scared_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "scratch": {
-      "frameInterval": 0.15,
-      "frames": [
+    "scratch" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "fox_scratch_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "shy": {
-      "frameInterval": 0.3,
-      "frames": [
+    "shy" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "fox_shy_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "sit": {
-      "frameInterval": 0.6,
-      "frames": [
+    "sing" : {
+      "frameInterval" : 0.13,
+      "frames" : [
+        "fox_sing_0",
+        "fox_sing_1",
+        "fox_sing_2",
+        "fox_sing_3",
+        "fox_sing_4"
+      ],
+      "loop" : false
+    },
+    "sit" : {
+      "frameInterval" : 0.59999999999999998,
+      "frames" : [
         "fox_sit_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "sleep": {
-      "frameInterval": 0.8,
-      "frames": [
+    "sleep" : {
+      "frameInterval" : 0.80000000000000004,
+      "frames" : [
         "fox_sleep_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "sneeze": {
-      "frameInterval": 0.15,
-      "frames": [
+    "slide" : {
+      "frameInterval" : 0.089999999999999997,
+      "frames" : [
+        "fox_slide_0",
+        "fox_slide_1",
+        "fox_slide_2",
+        "fox_slide_3"
+      ],
+      "loop" : false
+    },
+    "snack" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
+        "fox_snack_0",
+        "fox_snack_1",
+        "fox_snack_2",
+        "fox_snack_3"
+      ],
+      "loop" : false
+    },
+    "sneeze" : {
+      "frameInterval" : 0.14999999999999999,
+      "frames" : [
         "fox_sneeze_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "spin": {
-      "frameInterval": 0.12,
-      "frames": [
+    "sniff" : {
+      "frameInterval" : 0.14000000000000001,
+      "frames" : [
+        "fox_sniff_0",
+        "fox_sniff_1",
+        "fox_sniff_2",
+        "fox_sniff_3"
+      ],
+      "loop" : false
+    },
+    "somersault" : {
+      "frameInterval" : 0.089999999999999997,
+      "frames" : [
+        "fox_somersault_0",
+        "fox_somersault_1",
+        "fox_somersault_2",
+        "fox_somersault_3"
+      ],
+      "loop" : false
+    },
+    "somersaultCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "fox_crouch_0",
+        "fox_somersault_0",
+        "fox_somersault_1",
+        "fox_somersault_2",
+        "fox_somersault_3",
+        "fox_pawReach_0",
+        "fox_sparkle_0",
+        "fox_sparkle_3"
+      ],
+      "loop" : false
+    },
+    "sparkle" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "fox_sparkle_0",
+        "fox_sparkle_1",
+        "fox_sparkle_2",
+        "fox_sparkle_3",
+        "fox_sparkle_4"
+      ],
+      "loop" : false
+    },
+    "spin" : {
+      "frameInterval" : 0.12,
+      "frames" : [
         "fox_spin_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "stretch": {
-      "frameInterval": 0.35,
-      "frames": [
+    "stargaze" : {
+      "frameInterval" : 0.28000000000000003,
+      "frames" : [
+        "fox_stargaze_0",
+        "fox_stargaze_1",
+        "fox_stargaze_2",
+        "fox_stargaze_3"
+      ],
+      "loop" : false
+    },
+    "stretch" : {
+      "frameInterval" : 0.34999999999999998,
+      "frames" : [
         "fox_stretch_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "think": {
-      "frameInterval": 0.3,
-      "frames": [
+    "surprised" : {
+      "frameInterval" : 0.12,
+      "frames" : [
+        "fox_surprised_0",
+        "fox_surprised_1",
+        "fox_surprised_2"
+      ],
+      "loop" : false
+    },
+    "tailWag" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "fox_tailWag_0",
+        "fox_tailWag_1",
+        "fox_tailWag_2",
+        "fox_tailWag_3",
+        "fox_tailWag_4"
+      ],
+      "loop" : true
+    },
+    "think" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "fox_think_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "trip": {
-      "frameInterval": 0.12,
-      "frames": [
+    "trainingCombo" : {
+      "frameInterval" : 0.10000000000000001,
+      "frames" : [
+        "fox_guard_0",
+        "fox_guard_2",
+        "fox_crouch_0",
+        "fox_pounce_0",
+        "fox_pawTap_0",
+        "fox_pawReach_0",
+        "fox_angry_0",
+        "fox_proud_0"
+      ],
+      "loop" : false
+    },
+    "trip" : {
+      "frameInterval" : 0.12,
+      "frames" : [
         "fox_trip_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "type": {
-      "frameInterval": 0.3,
-      "frames": [
+    "type" : {
+      "frameInterval" : 0.29999999999999999,
+      "frames" : [
         "fox_type_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "walk": {
-      "frameInterval": 0.12,
-      "frames": [
+    "walk" : {
+      "frameInterval" : 0.12,
+      "frames" : [
         "fox_walk_0",
         "fox_walk_1",
         "fox_walk_2"
       ],
-      "loop": true
+      "loop" : true
     },
-    "wave": {
-      "frameInterval": 0.2,
-      "frames": [
+    "wave" : {
+      "frameInterval" : 0.20000000000000001,
+      "frames" : [
         "fox_wave_0"
       ],
-      "loop": false
+      "loop" : false
     },
-    "punch": {
-      "frameInterval": 0.14,
-      "frames": [
-        "fox_angry_0"
-      ],
-      "loop": false
-    },
-    "write": {
-      "frameInterval": 0.4,
-      "frames": [
+    "write" : {
+      "frameInterval" : 0.40000000000000002,
+      "frames" : [
         "fox_write_0"
       ],
-      "loop": true
+      "loop" : true
     },
-    "yawn": {
-      "frameInterval": 0.4,
-      "frames": [
+    "yawn" : {
+      "frameInterval" : 0.40000000000000002,
+      "frames" : [
         "fox_yawn_0"
       ],
-      "loop": false
+      "loop" : false
     }
   },
-  "version": "5.0.0",
-  "sounds": {
-    "react": "sounds/react.wav",
-    "walk": "sounds/walk.wav",
-    "run": "sounds/run.wav",
-    "eat": "sounds/eat.wav",
-    "drink": "sounds/drink.wav",
-    "sleep": "sounds/sleep.wav",
-    "yawn": "sounds/yawn.wav",
-    "sneeze": "sounds/sneeze.wav",
-    "celebrate": "sounds/celebrate.wav",
-    "sad": "sounds/sad.wav",
-    "scared": "sounds/scared.wav",
-    "angry": "sounds/angry.wav",
-    "scratch": "sounds/scratch.wav",
-    "play": "sounds/play.wav",
-    "love": "sounds/love.wav",
-    "chat": "sounds/chat.wav",
-    "alert": "sounds/alert.wav",
-    "cheer": "sounds/cheer.wav",
-    "confused": "sounds/confused.wav",
-    "shy": "sounds/shy.wav",
-    "type": "sounds/type.wav",
-    "write": "sounds/write.wav",
-    "read": "sounds/read.wav",
-    "phone": "sounds/phone.wav",
-    "gift": "sounds/gift.wav",
-    "bounce": "sounds/bounce.wav",
-    "sit": "sounds/sit.wav",
-    "land": "sounds/land.wav",
-    "spin": "sounds/spin.wav",
-    "dance": "sounds/dance.wav",
-    "roll": "sounds/roll.wav",
-    "trip": "sounds/trip.wav"
-  }
+  "version" : "5.0.0"
 }
