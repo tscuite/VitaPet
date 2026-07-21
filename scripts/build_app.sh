@@ -9,12 +9,15 @@ BUNDLE_ID="com.vitapet.VitaPet"
 VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0-dev")"
 VERSION="${VERSION#v}"
 
+TARGET_TRIPLE="${VITAPET_TARGET_TRIPLE:-}"
 ARCHS_ENV="${ARCHS:-}"
-if [ -n "${ARCHS_ENV}" ]; then
-  # shellcheck disable=SC2206
-  ARCH_LIST=(${ARCHS_ENV})
-else
-  ARCH_LIST=("$(uname -m)")
+if [ -z "${TARGET_TRIPLE}" ]; then
+  if [ -n "${ARCHS_ENV}" ]; then
+    # shellcheck disable=SC2206
+    ARCH_LIST=(${ARCHS_ENV})
+  else
+    ARCH_LIST=("$(uname -m)")
+  fi
 fi
 
 OUT_DIR="dist"
@@ -28,9 +31,13 @@ fi
 if [ -n "${VITAPET_SWIFT_INCLUDE_PATH:-}" ]; then
   BUILD_ARGS+=(-Xswiftc -I -Xswiftc "${VITAPET_SWIFT_INCLUDE_PATH}")
 fi
-for arch in "${ARCH_LIST[@]}"; do
-  BUILD_ARGS+=(--arch "$arch")
-done
+if [ -n "${TARGET_TRIPLE}" ]; then
+  BUILD_ARGS+=(--triple "${TARGET_TRIPLE}")
+else
+  for arch in "${ARCH_LIST[@]}"; do
+    BUILD_ARGS+=(--arch "$arch")
+  done
+fi
 
 echo "==> swift build ${BUILD_ARGS[*]}"
 swift build "${BUILD_ARGS[@]}"

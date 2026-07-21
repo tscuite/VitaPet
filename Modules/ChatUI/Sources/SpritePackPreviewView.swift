@@ -8,9 +8,17 @@ public struct SpritePackPreviewView: NSViewRepresentable {
     let packDirectory: URL?
     let previewSize: CGFloat
 
+    public final class Coordinator {
+        fileprivate var renderPolicy = SpritePackPreviewRenderPolicy()
+    }
+
     public init(packDirectory: URL? = nil, previewSize: CGFloat = 64) {
         self.packDirectory = packDirectory
         self.previewSize = previewSize
+    }
+
+    public func makeCoordinator() -> Coordinator {
+        Coordinator()
     }
 
     public func makeNSView(context: Context) -> SKView {
@@ -20,13 +28,29 @@ public struct SpritePackPreviewView: NSViewRepresentable {
         skView.layer?.backgroundColor = NSColor.clear.cgColor
         skView.layer?.cornerRadius = 8
         skView.layer?.masksToBounds = true
-        renderScene(in: skView)
+        renderIfNeeded(coordinator: context.coordinator) {
+            renderScene(in: skView)
+        }
         return skView
     }
 
     public func updateNSView(_ nsView: SKView, context: Context) {
         nsView.frame = CGRect(x: 0, y: 0, width: previewSize, height: previewSize)
-        renderScene(in: nsView)
+        renderIfNeeded(coordinator: context.coordinator) {
+            renderScene(in: nsView)
+        }
+    }
+
+    func renderIfNeeded(coordinator: Coordinator, render: () -> Void) {
+        let configuration = SpritePackPreviewRenderConfiguration(
+            packDirectory: packDirectory,
+            previewSize: Double(previewSize)
+        )
+        guard coordinator.renderPolicy.shouldRender(configuration) else {
+            return
+        }
+
+        render()
     }
 
     private func renderScene(in skView: SKView) {

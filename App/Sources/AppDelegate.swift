@@ -56,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var externalChatTask: Task<Void, Never>?
     private var notificationAITasks: [UUID: Task<Void, Never>] = [:]
     private var memoryWorkerService: MemoryWorkerService?
+    private let memoryRemoteBootstrapCoordinator = RemoteMemoryBootstrapCoordinator()
     private var interactionManager: PetInteractionManager!
     private var desktopAwareness = DesktopAwarenessController()
     private var timeWeatherController = TimeWeatherController()
@@ -105,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func orderlyShutdown() async -> Bool {
         let bootstrapTask = bootstrapTask
         bootstrapTask?.cancel()
+        await memoryRemoteBootstrapCoordinator.cancelAndWait()
         await bootstrapTask?.value
         self.bootstrapTask = nil
 
@@ -728,10 +730,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         startStorageMaintenanceSchedulerIfEnabled()
-        await syncFromRemoteMemories(databaseManager: databaseManager)
-        await pushUnsyncedMemoriesToRemote()
         await refreshMemoryContext()
-        startMemoryRemoteSyncTaskIfNeeded()
         self.configManager = configManager
         await warmupSecurityState()
         do {
@@ -1725,6 +1724,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for pet in configManager.config.pets {
             createAndShowPetController(for: pet)
         }
+        await memoryRemoteBootstrapCoordinator.markVisibleUIReady()
+        await startRemoteMemoryBootstrapIfNeeded(databaseManager: databaseManager)
         desktopAwareness.getPetControllers = { [weak self] in
             guard let self else { return [] }
             return Array(self.petWindowControllers.values)
@@ -2243,18 +2244,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func recordEvent(_ event: AppEvent) async {
-        guard let databaseManager else {
+        switch EventPersistencePolicy.strategy(forSource: event.caseName) {
+        case .transient:
             return
-        }
-
-        if case let .fileChanged(path, flags) = event,
-           let bufferedEventRecorder {
+        case .bufferedFileChange:
+            guard case let .fileChanged(path, flags) = event,
+                  let bufferedEventRecorder else {
+                return
+            }
             await bufferedEventRecorder.record(
                 FileEventDelivery(path: path, flags: flags)
             )
             return
+        case .immediate:
+            break
         }
 
+        guard let databaseManager else { return }
         guard let persistenceWriteGate else { return }
         do {
             let task = try persistenceWriteGate.submit {
@@ -2303,6 +2309,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static func memoryContentHash(_ content: String) -> String {
         MemoryContentHasher.stableHash(content)
+    }
+
+    private func startRemoteMemoryBootstrapIfNeeded(
+        databaseManager: DatabaseManager
+    ) async {
+        guard !terminationInProgress else { return }
+        await memoryRemoteBootstrapCoordinator.startIfReady {
+            [weak self, weak databaseManager] in
+            guard let self,
+                  let databaseManager,
+                  !Task.isCancelled,
+                  !self.terminationInProgress else {
+                return
+            }
+
+            await self.syncFromRemoteMemories(databaseManager: databaseManager)
+            guard !Task.isCancelled, !self.terminationInProgress else { return }
+            await self.pushUnsyncedMemoriesToRemote()
+            guard !Task.isCancelled, !self.terminationInProgress else { return }
+            await self.refreshMemoryContext()
+            guard !Task.isCancelled, !self.terminationInProgress else { return }
+            self.startMemoryRemoteSyncTaskIfNeeded()
+        }
     }
 
     private func replaceMemoryImmediateSyncTask(
@@ -2453,7 +2482,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Uploads local rows that never got `synced_at` (e.g. worker was off or the network failed once).
     private func pushUnsyncedMemoriesToRemote() async {
-        guard let databaseManager = self.databaseManager,
+        guard !Task.isCancelled,
+              let databaseManager = self.databaseManager,
               let memoryWorkerService = self.memoryWorkerService else {
             return
         }
@@ -2464,6 +2494,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             AppLogger.info("Memory worker: uploading \(pending.count) previously unsynced local memories")
             for record in pending {
+                guard !Task.isCancelled else { return }
                 do {
                     var tags = [record.source, record.category].map {
                         $0.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2481,12 +2512,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         id: record.id,
                         remoteId: remote.id.map(String.init)
                     )
+                } catch where Task.isCancelled {
+                    return
                 } catch {
                     AppLogger.error(
                         "Failed to push unsynced memory id=\(record.id): \(error.localizedDescription)"
                     )
                 }
             }
+        } catch where Task.isCancelled {
+            return
         } catch {
             AppLogger.error("Failed to read unsynced memories: \(error.localizedDescription)")
         }
@@ -2695,11 +2730,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// One-shot pull from the remote worker to hydrate local memories (useful for multi-device
     /// scenarios). Dedups against local content_hash so repeated pulls don't duplicate rows.
     private func syncFromRemoteMemories(databaseManager: DatabaseManager) async {
-        guard let memoryWorkerService = self.memoryWorkerService else { return }
+        guard !Task.isCancelled,
+              let memoryWorkerService = self.memoryWorkerService else { return }
 
         do {
             let remote = try await memoryWorkerService.queryMemories()
             for item in remote {
+                guard !Task.isCancelled else { return }
                 let hash = Self.memoryContentHash(item.content)
                 if (try? await databaseManager.memoryExists(contentHash: hash)) == true { continue }
                 do {
@@ -2717,6 +2754,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     AppLogger.error("Failed to hydrate remote memory: \(error.localizedDescription)")
                 }
             }
+        } catch where Task.isCancelled {
+            return
         } catch {
             AppLogger.error("Failed to pull remote memories: \(error.localizedDescription)")
         }

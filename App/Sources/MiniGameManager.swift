@@ -35,6 +35,7 @@ final class MiniGameManager {
         onGameStateChanged?(true)
 
         for pet in pets {
+            pet.claimMovementOwnershipForMiniGame()
             pet.clearDesktopBehavior()
         }
 
@@ -71,6 +72,20 @@ final class MiniGameManager {
 
 @MainActor
 enum MiniGameSupport {
+    static func commonModeTimer(
+        interval: TimeInterval,
+        repeats: Bool,
+        _ block: @escaping @MainActor @Sendable () -> Void
+    ) -> Timer {
+        let timer = Timer(timeInterval: interval, repeats: repeats) { _ in
+            MainActor.assumeIsolated {
+                block()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        return timer
+    }
+
     static func mainScreenFrame() -> NSRect {
         NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
     }

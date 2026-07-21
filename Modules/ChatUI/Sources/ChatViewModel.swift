@@ -25,6 +25,8 @@ public final class ChatViewModel {
     public private(set) var isStreaming = false
     public private(set) var activeStreamingConversationId: String?
     public private(set) var activeStreamingMessageId: UUID?
+    public private(set) var settledMessagesRevision: UInt64 = 0
+    private(set) var streamingDraft: ChatStreamingDraft?
     private var messagesByConversation: [String: [ChatMessage]] = [:]
     @ObservationIgnored private var activeSendTask: Task<Void, Never>?
     @ObservationIgnored private var activeSlashCommandTasks: [UUID: Task<Void, Never>] = [:]
@@ -94,6 +96,7 @@ public final class ChatViewModel {
         activeStreamingConversationId = conversationId
         activeSendTask = Task { @MainActor in
             defer {
+                streamingDraft = nil
                 isStreaming = false
                 activeStreamingConversationId = nil
                 activeStreamingMessageId = nil
@@ -119,6 +122,7 @@ public final class ChatViewModel {
             let assistantMessage = ChatMessage(role: .assistant, content: "")
             append(assistantMessage, to: conversationId)
             activeStreamingMessageId = assistantMessage.id
+            streamingDraft = ChatStreamingDraft(conversationId: conversationId, message: assistantMessage)
 
             do {
                 try Task.checkCancellation()
@@ -141,11 +145,10 @@ public final class ChatViewModel {
                 // so a busy render pass naturally drops stale intermediate text.
                 for try await snapshot in StreamingTextBatcher.snapshots(from: stream) {
                     bufferedReply = snapshot
-                    replaceMessage(
+                    updateStreamingDraft(
                         id: assistantMessage.id,
                         in: conversationId,
-                        with: assistantMessageWithContent(bufferedReply),
-                        updatesPreview: false
+                        content: bufferedReply
                     )
                 }
                 try Task.checkCancellation()
@@ -207,6 +210,26 @@ public final class ChatViewModel {
         isStreaming && selectedConversationId == activeStreamingConversationId
     }
 
+    /// The only per-snapshot observable value used by the active conversation.
+    /// The scope checks deliberately happen before reading `streamingDraft` so
+    /// another selected conversation does not subscribe to draft churn.
+    public var currentStreamingDraftContent: String? {
+        guard isCurrentConversationStreaming,
+              activeStreamingMessageId != nil else {
+            return nil
+        }
+        return streamingDraft?.content
+    }
+
+    public func presentedMessage(_ settledMessage: ChatMessage, in conversationId: String) -> ChatMessage {
+        guard conversationId == activeStreamingConversationId,
+              settledMessage.id == activeStreamingMessageId else {
+            return settledMessage
+        }
+        return streamingDraft?.presentedMessage(replacing: settledMessage, in: conversationId)
+            ?? settledMessage
+    }
+
     public func isStreaming(messageId: UUID, in conversationId: String) -> Bool {
         isStreaming
             && activeStreamingConversationId == conversationId
@@ -259,6 +282,7 @@ public final class ChatViewModel {
             captureShowThinkingIfNeeded(for: message.id)
         }
         messagesByConversation[conversationId] = messages
+        settledMessagesRevision &+= 1
         if conversationId == selectedConversationId {
             currentMessages = messages
         }
@@ -367,6 +391,7 @@ public final class ChatViewModel {
         captureShowThinkingIfNeeded(for: message.id)
         messages.append(message)
         messagesByConversation[conversationId] = messages
+        settledMessagesRevision &+= 1
         if selectedConversationId == conversationId {
             currentMessages = messages
         }
@@ -453,6 +478,7 @@ public final class ChatViewModel {
         }
         messages[messageIndex] = message
         messagesByConversation[conversationId] = messages
+        settledMessagesRevision &+= 1
         if selectedConversationId == conversationId {
             currentMessages = messages
         }
@@ -486,16 +512,37 @@ public final class ChatViewModel {
               let messageIndex = messages.firstIndex(where: { $0.id == messageId }) else {
             return
         }
-        let message = messages[messageIndex]
-        if message.content.isEmpty {
+        let settledMessage = messages[messageIndex]
+        let draftMessage = streamingDraft?
+            .presentedMessage(replacing: settledMessage, in: conversationId) ?? settledMessage
+        if draftMessage.content.isEmpty {
             messages.remove(at: messageIndex)
             messagesByConversation[conversationId] = messages
+            settledMessagesRevision &+= 1
             capturedShowThinking[messageId] = nil
             if selectedConversationId == conversationId {
                 currentMessages = messages
             }
         } else {
-            updateConversationPreview(for: conversationId, using: message)
+            messages[messageIndex] = draftMessage
+            messagesByConversation[conversationId] = messages
+            settledMessagesRevision &+= 1
+            if selectedConversationId == conversationId {
+                currentMessages = messages
+            }
+            updateConversationPreview(for: conversationId, using: draftMessage)
+        }
+    }
+
+    private func updateStreamingDraft(id messageId: UUID, in conversationId: String, content: String) {
+        guard var draft = streamingDraft,
+              draft.conversationId == conversationId,
+              draft.message.id == messageId else {
+            return
+        }
+        draft.update(content: content)
+        if draft != streamingDraft {
+            streamingDraft = draft
         }
     }
 

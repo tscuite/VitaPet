@@ -22,6 +22,62 @@ public struct MovementSessionTracker: Sendable {
     }
 }
 
+/// Converts monotonic timestamps into bounded elapsed-time steps. A bounded
+/// delta keeps a resumed run loop from teleporting moving windows after a long
+/// system stall while still making normal movement independent of timer rate.
+public struct ElapsedTickClock: Sendable {
+    public let maximumDelta: TimeInterval
+    private var lastTimestamp: TimeInterval?
+
+    public init(maximumDelta: TimeInterval = 0.1) {
+        self.maximumDelta = max(0, maximumDelta)
+    }
+
+    public mutating func reset(at timestamp: TimeInterval) {
+        lastTimestamp = timestamp
+    }
+
+    public mutating func advance(to timestamp: TimeInterval) -> TimeInterval {
+        guard let previousTimestamp = lastTimestamp else {
+            lastTimestamp = timestamp
+            return 0
+        }
+        guard timestamp >= previousTimestamp else {
+            return 0
+        }
+
+        lastTimestamp = timestamp
+        return min(timestamp - previousTimestamp, maximumDelta)
+    }
+}
+
+/// Coordinates the two idempotence rules used by multi-pet movement loops:
+/// each pet may receive at most one position write per tick, and its transition
+/// into the following phase may happen at most once for the whole game.
+public struct MovementTickCoordinator<ID: Hashable> {
+    private var positionWritesThisTick: Set<ID> = []
+    private var followTransitions: Set<ID> = []
+
+    public init() {}
+
+    public mutating func beginTick() {
+        positionWritesThisTick.removeAll(keepingCapacity: true)
+    }
+
+    public mutating func claimPositionWrite(for id: ID) -> Bool {
+        positionWritesThisTick.insert(id).inserted
+    }
+
+    public mutating func claimFollowTransition(for id: ID) -> Bool {
+        followTransitions.insert(id).inserted
+    }
+
+    public mutating func reset() {
+        positionWritesThisTick.removeAll(keepingCapacity: true)
+        followTransitions.removeAll(keepingCapacity: true)
+    }
+}
+
 public enum MotionFramePlanner {
     public static func steps(forDuration duration: TimeInterval, frameRate: TimeInterval) -> Int {
         guard duration > 0, frameRate > 0 else {

@@ -6,9 +6,9 @@ public final class BehaviorEngine {
     private let screenBounds: () -> NSRect
     private var cursorTrackingTimer: Timer?
     private var currentMovement: MovementState?
-    private var cursorTrackingPetCenter: (() -> NSPoint)?
-    private var cursorTrackingOnFlip: ((Bool) -> Void)?
-    private var cursorTrackingOnReact: (() -> Void)?
+    private var cursorTrackingPetCenter: (@MainActor @Sendable () -> NSPoint)?
+    private var cursorTrackingOnFlip: (@MainActor @Sendable (Bool) -> Void)?
+    private var cursorTrackingOnReact: (@MainActor @Sendable () -> Void)?
     private var cursorTrackingContext: CursorTrackingContext?
     private var cursorTrackingReactThreshold: CGFloat = 0
     private let cursorTrackingReactInterval: TimeInterval = 60
@@ -34,12 +34,12 @@ public final class BehaviorEngine {
         let id: UUID
         var timer: Timer?
         var completionWorkItem: DispatchWorkItem?
-        var completion: (() -> Void)?
+        var completion: (@MainActor @Sendable () -> Void)?
 
         init(
             id: UUID,
             completionWorkItem: DispatchWorkItem? = nil,
-            completion: (() -> Void)? = nil
+            completion: (@MainActor @Sendable () -> Void)? = nil
         ) {
             self.id = id
             self.completionWorkItem = completionWorkItem
@@ -53,6 +53,11 @@ public final class BehaviorEngine {
             completionWorkItem = nil
         }
 
+        deinit {
+            cancel()
+        }
+
+        @MainActor
         func finish() {
             let completion = self.completion
             self.completion = nil
@@ -64,9 +69,9 @@ public final class BehaviorEngine {
     nonisolated private static let frameInterval: TimeInterval = 1.0 / frameRate
     nonisolated private static let epsilonDistance: CGFloat = 0.1
 
-    public var onDetectWindows: (() -> [CGRect])?
-    public var onRotate: ((CGFloat) -> Void)?
-    public var onAnimationChange: ((String) -> Void)?
+    public var onDetectWindows: (@MainActor @Sendable () -> [CGRect])?
+    public var onRotate: (@MainActor @Sendable (CGFloat) -> Void)?
+    public var onAnimationChange: (@MainActor @Sendable (String) -> Void)?
 
     public init(manifest: BehaviorManifest, screenBounds: @escaping () -> NSRect) {
         self.manifest = manifest
@@ -77,12 +82,12 @@ public final class BehaviorEngine {
         _ name: String,
         currentPosition: NSPoint,
         petSize: CGFloat,
-        trackingTarget: (@MainActor () -> NSPoint?)? = nil,
+        trackingTarget: (@MainActor @Sendable () -> NSPoint?)? = nil,
         otherPetPositions: (() -> [NSPoint])? = nil,
-        onMove: @escaping @Sendable (NSPoint, TimeInterval) -> Void,
-        onFlip: @escaping @Sendable (Bool) -> Void,
-        onComplete: @escaping @Sendable () -> Void,
-        onLand: (@Sendable () -> Void)? = nil
+        onMove: @escaping @MainActor @Sendable (NSPoint, TimeInterval) -> Void,
+        onFlip: @escaping @MainActor @Sendable (Bool) -> Void,
+        onComplete: @escaping @MainActor @Sendable () -> Void,
+        onLand: (@MainActor @Sendable () -> Void)? = nil
     ) {
         cancelCurrentBehavior()
 
@@ -173,9 +178,9 @@ public final class BehaviorEngine {
         currentPosition: NSPoint,
         petSize: CGFloat,
         otherPetPositions: (() -> [NSPoint])?,
-        onMove: @escaping @Sendable (NSPoint, TimeInterval) -> Void,
-        onFlip: @escaping @Sendable (Bool) -> Void,
-        onComplete: @escaping @Sendable () -> Void
+        onMove: @escaping @MainActor @Sendable (NSPoint, TimeInterval) -> Void,
+        onFlip: @escaping @MainActor @Sendable (Bool) -> Void,
+        onComplete: @escaping @MainActor @Sendable () -> Void
     ) {
         guard let targetPoint = calculatedTargetPoint(
             definition: definition,
@@ -206,30 +211,18 @@ public final class BehaviorEngine {
             return
         }
 
-        let speed = max(definition.speed ?? 1.0, 1.0)
-        let duration = distance / speed
-
-        onMove(adjustedTarget, TimeInterval(duration))
-
         let movementID = UUID()
-        let workItem = DispatchWorkItem { [weak self] in
-            if let self,
-               let movement = self.currentMovement,
-               movement.id == movementID {
-                movement.timer = nil
-                self.currentMovement = nil
-                movement.finish()
-            } else {
-                onComplete()
-            }
-        }
-
-        currentMovement = MovementState(
-            id: movementID,
-            completionWorkItem: workItem,
-            completion: onComplete
+        currentMovement = MovementState(id: movementID, completion: onComplete)
+        runLinearMovement(
+            movementID: movementID,
+            from: currentPosition,
+            to: adjustedTarget,
+            speed: max(definition.speed ?? 1.0, 1.0),
+            onMove: { point in
+                onMove(point, 0)
+            },
+            onComplete: {}
         )
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: workItem)
     }
 
     private func executeJump(
@@ -237,10 +230,10 @@ public final class BehaviorEngine {
         currentPosition: NSPoint,
         petSize: CGFloat,
         otherPetPositions: (() -> [NSPoint])?,
-        onMove: @escaping @Sendable (NSPoint, TimeInterval) -> Void,
-        onFlip: @escaping @Sendable (Bool) -> Void,
-        onLand: (@Sendable () -> Void)? = nil,
-        onComplete: @escaping @Sendable () -> Void
+        onMove: @escaping @MainActor @Sendable (NSPoint, TimeInterval) -> Void,
+        onFlip: @escaping @MainActor @Sendable (Bool) -> Void,
+        onLand: (@MainActor @Sendable () -> Void)? = nil,
+        onComplete: @escaping @MainActor @Sendable () -> Void
     ) {
         guard let targetPoint = calculatedTargetPoint(
             definition: definition,
@@ -279,47 +272,51 @@ public final class BehaviorEngine {
         let movementID = UUID()
         currentMovement = MovementState(id: movementID, completion: onComplete)
 
-        let startTime = Date()
+        let startTime = ProcessInfo.processInfo.systemUptime
         currentMovement?.timer?.invalidate()
-        let timer = Timer.scheduledTimer(withTimeInterval: Self.frameInterval, repeats: true) { [weak self] timer in
-            guard let self,
-                  let movement = MainActor.assumeIsolated({ self.currentMovement }),
-                  movement.id == movementID else {
-                timer.invalidate()
-                return
-            }
+        let timer = Timer(timeInterval: Self.frameInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self,
+                      let movement = self.currentMovement,
+                      movement.id == movementID else {
+                    return
+                }
 
-            let elapsed = Date().timeIntervalSince(startTime)
-            let progress = min(elapsed / duration, 1)
+                let elapsed = ProcessInfo.processInfo.systemUptime - startTime
+                let progress = min(elapsed / duration, 1)
+                let shouldFinish = progress >= 1
+                let point: NSPoint
+                if shouldFinish {
+                    point = adjustedTarget
+                } else {
+                    let x = currentPosition.x + (adjustedTarget.x - currentPosition.x) * progress
+                    let arcY = Double(currentPosition.y) + Double(adjustedTarget.y - currentPosition.y) * progress +
+                        (jumpHeight * sin(progress * .pi))
+                    point = NSPoint(x: x, y: CGFloat(arcY))
+                }
+                onMove(point, 0)
 
-            let x = currentPosition.x + (adjustedTarget.x - currentPosition.x) * progress
-            let arcY = Double(currentPosition.y) + Double(adjustedTarget.y - currentPosition.y) * progress +
-                (jumpHeight * sin(progress * .pi))
-            let point = NSPoint(x: x, y: CGFloat(arcY))
-            onMove(point, 0)
-
-            if progress >= 1 {
-                timer.invalidate()
-                MainActor.assumeIsolated {
+                if shouldFinish {
+                    movement.timer?.invalidate()
                     movement.timer = nil
                     self.currentMovement = nil
+                    onLand?()
+                    movement.finish()
                 }
-                onLand?()
-                movement.finish()
-                return
             }
         }
         currentMovement?.timer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     private func executeChase(
         definition: BehaviorDefinition,
         currentPosition: NSPoint,
         petSize: CGFloat,
-        trackingTarget: (@MainActor () -> NSPoint?)?,
-        onMove: @escaping @Sendable (NSPoint, TimeInterval) -> Void,
-        onFlip: @escaping @Sendable (Bool) -> Void,
-        onComplete: @escaping @Sendable () -> Void
+        trackingTarget: (@MainActor @Sendable () -> NSPoint?)?,
+        onMove: @escaping @MainActor @Sendable (NSPoint, TimeInterval) -> Void,
+        onFlip: @escaping @MainActor @Sendable (Bool) -> Void,
+        onComplete: @escaping @MainActor @Sendable () -> Void
     ) {
         let speed = max(definition.speed ?? 1.0, 1.0)
         let stopDistance = definition.stopDistance ?? 0
@@ -328,100 +325,94 @@ public final class BehaviorEngine {
         let movementID = UUID()
         currentMovement = MovementState(id: movementID, completion: onComplete)
 
-        final class TrackingState: @unchecked Sendable { var position: NSPoint; init(_ p: NSPoint) { position = p } }
-        let tracking = TrackingState(currentPosition)
-        let startTime = Date()
+        final class TrackingState: @unchecked Sendable {
+            var position: NSPoint
+            var clock = ElapsedTickClock(maximumDelta: 0.1)
+
+            init(_ position: NSPoint, timestamp: TimeInterval) {
+                self.position = position
+                clock.reset(at: timestamp)
+            }
+        }
+        let startTime = ProcessInfo.processInfo.systemUptime
+        let tracking = TrackingState(currentPosition, timestamp: startTime)
 
         currentMovement?.timer?.invalidate()
-        let timer = Timer.scheduledTimer(withTimeInterval: Self.frameInterval, repeats: true) { [weak self] timer in
-            guard let self,
-                  let movement = MainActor.assumeIsolated({ self.currentMovement }),
-                  movement.id == movementID else {
-                timer.invalidate()
-                return
-            }
+        let timer = Timer(timeInterval: Self.frameInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self,
+                      let movement = self.currentMovement,
+                      movement.id == movementID else {
+                    return
+                }
 
-            if Date().timeIntervalSince(startTime) >= maxDuration {
-                timer.invalidate()
-                MainActor.assumeIsolated {
+                let timestamp = ProcessInfo.processInfo.systemUptime
+                let elapsed = timestamp - startTime
+                let deltaTime = tracking.clock.advance(to: timestamp)
+                if elapsed >= maxDuration {
+                    movement.timer?.invalidate()
                     movement.timer = nil
                     self.currentMovement = nil
+                    movement.finish()
+                    return
                 }
-                movement.finish()
-                return
-            }
 
-            let targetPosition: NSPoint
-            if let trackingTarget,
-               let customTarget = MainActor.assumeIsolated({ trackingTarget() }) {
-                targetPosition = customTarget
-            } else {
-                targetPosition = NSEvent.mouseLocation
-            }
+                let targetPosition = trackingTarget?() ?? NSEvent.mouseLocation
+                let deltaX = targetPosition.x - tracking.position.x
+                let deltaY = targetPosition.y - tracking.position.y
+                let distanceToCursor = sqrt((deltaX * deltaX) + (deltaY * deltaY))
 
-            let deltaX = targetPosition.x - tracking.position.x
-            let deltaY = targetPosition.y - tracking.position.y
-            let distanceToCursor = sqrt((deltaX * deltaX) + (deltaY * deltaY))
-
-            if stopDistance > 0 && distanceToCursor <= stopDistance {
-                timer.invalidate()
-                MainActor.assumeIsolated {
+                if stopDistance > 0 && distanceToCursor <= stopDistance {
+                    movement.timer?.invalidate()
                     movement.timer = nil
                     self.currentMovement = nil
+                    movement.finish()
+                    return
                 }
-                movement.finish()
-                return
-            }
 
-            if let shouldFlip = definition.flipToDirection, shouldFlip {
-                if deltaX < 0 {
-                    onFlip(true)
-                } else if deltaX > 0 {
-                    onFlip(false)
+                if let shouldFlip = definition.flipToDirection, shouldFlip {
+                    if deltaX < 0 {
+                        onFlip(true)
+                    } else if deltaX > 0 {
+                        onFlip(false)
+                    }
                 }
-            }
 
-            guard distanceToCursor > 0 else {
-                return
-            }
-
-            let stepDistance = CGFloat(speed * Self.frameInterval)
-            if stepDistance <= 0 {
-                timer.invalidate()
-                MainActor.assumeIsolated {
-                    movement.timer = nil
-                    self.currentMovement = nil
+                guard distanceToCursor > 0 else {
+                    return
                 }
-                movement.finish()
-                return
-            }
 
-            let ratio = min(stepDistance / distanceToCursor, 1)
-            let rawX = tracking.position.x + (deltaX * ratio)
-            let rawY = tracking.position.y + (deltaY * ratio)
-            let nextPoint = MainActor.assumeIsolated {
-                self.clampPoint(NSPoint(x: rawX, y: rawY), for: petSize)
-            }
+                let stepDistance = CGFloat(speed * deltaTime)
+                if stepDistance <= 0 {
+                    return
+                }
 
-            guard abs(nextPoint.x - tracking.position.x) > Self.epsilonDistance ||
-                  abs(nextPoint.y - tracking.position.y) > Self.epsilonDistance else {
-                return
-            }
+                let ratio = min(stepDistance / distanceToCursor, 1)
+                let rawX = tracking.position.x + (deltaX * ratio)
+                let rawY = tracking.position.y + (deltaY * ratio)
+                let nextPoint = self.clampPoint(NSPoint(x: rawX, y: rawY), for: petSize)
 
-            tracking.position = nextPoint
-            onMove(nextPoint, 0)
+                guard abs(nextPoint.x - tracking.position.x) > Self.epsilonDistance ||
+                      abs(nextPoint.y - tracking.position.y) > Self.epsilonDistance else {
+                    return
+                }
+
+                tracking.position = nextPoint
+                onMove(nextPoint, 0)
+            }
         }
 
         currentMovement?.timer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     private func executeHide(
         definition: BehaviorDefinition,
         currentPosition: NSPoint,
         petSize: CGFloat,
-        onMove: @escaping @Sendable (NSPoint, TimeInterval) -> Void,
-        onFlip: @escaping @Sendable (Bool) -> Void,
-        onComplete: @escaping @Sendable () -> Void
+        onMove: @escaping @MainActor @Sendable (NSPoint, TimeInterval) -> Void,
+        onFlip: @escaping @MainActor @Sendable (Bool) -> Void,
+        onComplete: @escaping @MainActor @Sendable () -> Void
     ) {
         let moveOutSpeed = max(definition.speed ?? 1.0, 1.0)
         let peekBackSpeed = max(definition.peekBackSpeed ?? 1.0, 1.0)
@@ -453,55 +444,49 @@ public final class BehaviorEngine {
                 onMove(point, 0)
             },
             onComplete: { [weak self] in
-                let beginPeekBack: @Sendable () -> Void = { [weak self] in
+                let beginPeekBack: @MainActor @Sendable () -> Void = { [weak self] in
+                    guard let self else {
+                        return
+                    }
+
+                    self.runLinearMovement(
+                        movementID: movementID,
+                        from: hiddenPoint,
+                        to: currentPosition,
+                        speed: peekBackSpeed,
+                        onMove: { point in
+                            onMove(point, 0)
+                        },
+                        onComplete: {}
+                    )
+                }
+
+                guard let self,
+                      let movement = self.currentMovement,
+                      movement.id == movementID else {
+                    return
+                }
+
+                guard hideTime > 0 else {
+                    beginPeekBack()
+                    return
+                }
+
+                self.currentMovement?.timer?.invalidate()
+                let timer = Timer(timeInterval: hideTime, repeats: false) { [weak self] _ in
                     MainActor.assumeIsolated {
-                        guard let self else {
+                        guard let self,
+                              let movement = self.currentMovement,
+                              movement.id == movementID else {
                             return
                         }
-
-                        self.runLinearMovement(
-                            movementID: movementID,
-                            from: hiddenPoint,
-                            to: currentPosition,
-                            speed: peekBackSpeed,
-                            onMove: { point in
-                                onMove(point, 0)
-                            },
-                            onComplete: {
-                                MainActor.assumeIsolated {
-                                    guard let movement = self.currentMovement,
-                                          movement.id == movementID else {
-                                        return
-                                    }
-                                    self.currentMovement = nil
-                                    movement.finish()
-                                }
-                            }
-                        )
-                    }
-                }
-
-                MainActor.assumeIsolated {
-                    guard let self,
-                          let movement = self.currentMovement,
-                          movement.id == movementID else {
-                        return
-                    }
-
-                    guard hideTime > 0 else {
-                        beginPeekBack()
-                        return
-                    }
-
-                    self.currentMovement?.timer?.invalidate()
-                    self.currentMovement?.timer = Timer.scheduledTimer(
-                        withTimeInterval: hideTime,
-                        repeats: false
-                    ) { timer in
-                        timer.invalidate()
+                        movement.timer?.invalidate()
+                        movement.timer = nil
                         beginPeekBack()
                     }
                 }
+                self.currentMovement?.timer = timer
+                RunLoop.main.add(timer, forMode: .common)
             }
         )
     }
@@ -510,9 +495,9 @@ public final class BehaviorEngine {
         definition: BehaviorDefinition,
         currentPosition: NSPoint,
         petSize: CGFloat,
-        onMove: @escaping @Sendable (NSPoint, TimeInterval) -> Void,
-        onFlip: @escaping @Sendable (Bool) -> Void,
-        onComplete: @escaping @Sendable () -> Void
+        onMove: @escaping @MainActor @Sendable (NSPoint, TimeInterval) -> Void,
+        onFlip: @escaping @MainActor @Sendable (Bool) -> Void,
+        onComplete: @escaping @MainActor @Sendable () -> Void
     ) {
         guard let windowFrame = nearestWindow(to: currentPosition, petSize: petSize) else {
             executeFallbackMove(
@@ -543,52 +528,59 @@ public final class BehaviorEngine {
         onAnimationChange?(definition.animation ?? "walk")
         currentMovement = MovementState(id: movementID, completion: onComplete)
 
-        let moveDuration = movementDuration(from: currentPosition, to: sitPoint, speed: speed)
-        onMove(sitPoint, moveDuration)
-
-        scheduleMovementStep(movementID: movementID, delay: moveDuration) { [weak self] movement in
-            guard let self else {
-                return
-            }
-
-            self.onAnimationChange?("sit")
-
-            let sitDuration = max(definition.sitDuration ?? Double.random(in: 3...8), 0)
-            self.scheduleMovementStep(movementID: movementID, delay: sitDuration) { [weak self] movement in
+        runLinearMovement(
+            movementID: movementID,
+            from: currentPosition,
+            to: sitPoint,
+            speed: speed,
+            autoComplete: false,
+            onMove: { point in
+                onMove(point, 0)
+            },
+            onComplete: { [weak self] in
                 guard let self else {
                     return
                 }
 
-                let groundPoint = self.clampPoint(
-                    NSPoint(x: sitPoint.x, y: self.screenBounds().minY),
-                    for: petSize
-                )
+                self.onAnimationChange?("sit")
 
-                self.onAnimationChange?("jump")
-                let landDuration = self.movementDuration(from: sitPoint, to: groundPoint, speed: speed)
-                onMove(groundPoint, landDuration)
-
-                self.scheduleMovementStep(movementID: movementID, delay: landDuration) { [weak self] movement in
+                let sitDuration = max(definition.sitDuration ?? Double.random(in: 3...8), 0)
+                self.scheduleMovementStep(movementID: movementID, delay: sitDuration) { [weak self] _ in
                     guard let self else {
                         return
                     }
 
-                    self.onRotate?(0)
-                    self.onAnimationChange?("idle")
-                    self.currentMovement = nil
-                    movement.finish()
+                    let groundPoint = self.clampPoint(
+                        NSPoint(x: sitPoint.x, y: self.screenBounds().minY),
+                        for: petSize
+                    )
+
+                    self.onAnimationChange?("jump")
+                    self.runLinearMovement(
+                        movementID: movementID,
+                        from: sitPoint,
+                        to: groundPoint,
+                        speed: speed,
+                        onMove: { point in
+                            onMove(point, 0)
+                        },
+                        onComplete: { [weak self] in
+                            self?.onRotate?(0)
+                            self?.onAnimationChange?("idle")
+                        }
+                    )
                 }
             }
-        }
+        )
     }
 
     private func executeWindowClimb(
         definition: BehaviorDefinition,
         currentPosition: NSPoint,
         petSize: CGFloat,
-        onMove: @escaping @Sendable (NSPoint, TimeInterval) -> Void,
-        onFlip: @escaping @Sendable (Bool) -> Void,
-        onComplete: @escaping @Sendable () -> Void
+        onMove: @escaping @MainActor @Sendable (NSPoint, TimeInterval) -> Void,
+        onFlip: @escaping @MainActor @Sendable (Bool) -> Void,
+        onComplete: @escaping @MainActor @Sendable () -> Void
     ) {
         guard let windowFrame = nearestWindow(to: currentPosition, petSize: petSize) else {
             executeFallbackMove(
@@ -620,30 +612,35 @@ public final class BehaviorEngine {
         onAnimationChange?(definition.animation ?? "walk")
         currentMovement = MovementState(id: movementID, completion: onComplete)
 
-        let walkDuration = movementDuration(from: currentPosition, to: basePoint, speed: speed)
-        onMove(basePoint, walkDuration)
+        runLinearMovement(
+            movementID: movementID,
+            from: currentPosition,
+            to: basePoint,
+            speed: speed,
+            autoComplete: false,
+            onMove: { point in
+                onMove(point, 0)
+            },
+            onComplete: { [weak self] in
+                guard let self,
+                      let movement = self.currentMovement,
+                      movement.id == movementID else {
+                    return
+                }
 
-        scheduleMovementStep(movementID: movementID, delay: walkDuration) { [weak self] _ in
-            guard let self,
-                  let movement = self.currentMovement,
-                  movement.id == movementID else {
-                return
-            }
+                self.onRotate?(useLeftEdge ? (.pi / 2) : (-.pi / 2))
+                self.onAnimationChange?("climb")
 
-            self.onRotate?(useLeftEdge ? (.pi / 2) : (-.pi / 2))
-            self.onAnimationChange?("climb")
-
-            self.runLinearMovement(
-                movementID: movementID,
-                from: basePoint,
-                to: climbTopPoint,
-                speed: speed,
-                autoComplete: false,
-                onMove: { point in
-                    onMove(point, 0)
-                },
-                onComplete: { [weak self] in
-                    MainActor.assumeIsolated {
+                self.runLinearMovement(
+                    movementID: movementID,
+                    from: basePoint,
+                    to: climbTopPoint,
+                    speed: speed,
+                    autoComplete: false,
+                    onMove: { point in
+                        onMove(point, 0)
+                    },
+                    onComplete: { [weak self] in
                         guard let self,
                               let movement = self.currentMovement,
                               movement.id == movementID else {
@@ -654,27 +651,34 @@ public final class BehaviorEngine {
                         self.onAnimationChange?("sit")
 
                         let sitDuration = max(definition.sitDuration ?? 3.0, 0)
-                        self.scheduleMovementStep(movementID: movementID, delay: sitDuration) { movement in
+                        self.scheduleMovementStep(movementID: movementID, delay: sitDuration) { [weak self] _ in
+                            guard let self else {
+                                return
+                            }
                             let groundPoint = self.clampPoint(
                                 NSPoint(x: climbTopPoint.x, y: self.screenBounds().minY),
                                 for: petSize
                             )
 
                             self.onAnimationChange?("jump")
-                            let landDuration = self.movementDuration(from: climbTopPoint, to: groundPoint, speed: speed)
-                            onMove(groundPoint, landDuration)
-
-                            self.scheduleMovementStep(movementID: movementID, delay: landDuration) { movement in
-                                self.onRotate?(0)
-                                self.onAnimationChange?("idle")
-                                self.currentMovement = nil
-                                movement.finish()
-                            }
+                            self.runLinearMovement(
+                                movementID: movementID,
+                                from: climbTopPoint,
+                                to: groundPoint,
+                                speed: speed,
+                                onMove: { point in
+                                    onMove(point, 0)
+                                },
+                                onComplete: { [weak self] in
+                                    self?.onRotate?(0)
+                                    self?.onAnimationChange?("idle")
+                                }
+                            )
                         }
                     }
-                }
-            )
-        }
+                )
+            }
+        )
     }
 
     private func runLinearMovement(
@@ -683,11 +687,10 @@ public final class BehaviorEngine {
         to targetPoint: NSPoint,
         speed: Double,
         autoComplete: Bool = true,
-        onMove: @escaping @Sendable (NSPoint) -> Void,
-        onComplete: @escaping @Sendable () -> Void
+        onMove: @escaping @MainActor @Sendable (NSPoint) -> Void,
+        onComplete: @escaping @MainActor @Sendable () -> Void
     ) {
         guard let movement = currentMovement, movement.id == movementID else {
-            onComplete()
             return
         }
 
@@ -697,6 +700,7 @@ public final class BehaviorEngine {
             if autoComplete {
                 movement.timer = nil
                 self.currentMovement = nil
+                onComplete()
                 movement.finish()
             } else {
                 onComplete()
@@ -710,6 +714,7 @@ public final class BehaviorEngine {
             if autoComplete {
                 movement.timer = nil
                 self.currentMovement = nil
+                onComplete()
                 movement.finish()
             } else {
                 onComplete()
@@ -717,37 +722,44 @@ public final class BehaviorEngine {
             return
         }
 
-        let startTime = Date()
+        let startTime = ProcessInfo.processInfo.systemUptime
         movement.timer?.invalidate()
-        let timer = Timer.scheduledTimer(withTimeInterval: Self.frameInterval, repeats: true) { [weak self] timer in
-            guard let self,
-                  let activeMovement = MainActor.assumeIsolated({ self.currentMovement }),
-                  activeMovement.id == movementID else {
-                timer.invalidate()
-                return
-            }
+        let timer = Timer(timeInterval: Self.frameInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self,
+                      let activeMovement = self.currentMovement,
+                      activeMovement.id == movementID else {
+                    return
+                }
 
-            let elapsed = Date().timeIntervalSince(startTime)
-            let progress = min(elapsed / Double(duration), 1)
-
-            let x = startPoint.x + (targetPoint.x - startPoint.x) * CGFloat(progress)
-            let y = startPoint.y + (targetPoint.y - startPoint.y) * CGFloat(progress)
-            onMove(NSPoint(x: x, y: y))
-
-            if progress >= 1 {
-                timer.invalidate()
-                if autoComplete {
-                    MainActor.assumeIsolated {
-                        activeMovement.timer = nil
-                        self.currentMovement = nil
-                    }
-                    activeMovement.finish()
+                let elapsed = ProcessInfo.processInfo.systemUptime - startTime
+                let progress = min(elapsed / Double(duration), 1)
+                let shouldFinish = progress >= 1
+                let point: NSPoint
+                if shouldFinish {
+                    point = targetPoint
                 } else {
-                    onComplete()
+                    let x = startPoint.x + (targetPoint.x - startPoint.x) * CGFloat(progress)
+                    let y = startPoint.y + (targetPoint.y - startPoint.y) * CGFloat(progress)
+                    point = NSPoint(x: x, y: y)
+                }
+                onMove(point)
+
+                if shouldFinish {
+                    activeMovement.timer?.invalidate()
+                    activeMovement.timer = nil
+                    if autoComplete {
+                        self.currentMovement = nil
+                        onComplete()
+                        activeMovement.finish()
+                    } else {
+                        onComplete()
+                    }
                 }
             }
         }
         movement.timer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     private func calculatedTargetPoint(
@@ -902,9 +914,9 @@ public final class BehaviorEngine {
     private func executeFallbackMove(
         currentPosition: NSPoint,
         petSize: CGFloat,
-        onMove: @escaping @Sendable (NSPoint, TimeInterval) -> Void,
-        onFlip: @escaping @Sendable (Bool) -> Void,
-        onComplete: @escaping @Sendable () -> Void
+        onMove: @escaping @MainActor @Sendable (NSPoint, TimeInterval) -> Void,
+        onFlip: @escaping @MainActor @Sendable (Bool) -> Void,
+        onComplete: @escaping @MainActor @Sendable () -> Void
     ) {
         guard let fallback = behaviorDefinition(for: "walk") else {
             onComplete()
@@ -966,9 +978,9 @@ public final class BehaviorEngine {
     }
 
     public func startCursorTracking(
-        petCenter: @escaping @Sendable () -> NSPoint,
-        onFlip: @escaping @Sendable (Bool) -> Void,
-        onReact: @escaping @Sendable () -> Void
+        petCenter: @escaping @MainActor @Sendable () -> NSPoint,
+        onFlip: @escaping @MainActor @Sendable (Bool) -> Void,
+        onReact: @escaping @MainActor @Sendable () -> Void
     ) {
         stopCursorTracking()
 
@@ -982,12 +994,13 @@ public final class BehaviorEngine {
             cursorWasOutsideReactZone: true
         )
 
-        cursorTrackingTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
                 self?.performCursorTracking()
             }
         }
-        RunLoop.main.add(cursorTrackingTimer!, forMode: .common)
+        cursorTrackingTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     public func stopCursorTracking() {

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Localization
 import SwiftUI
@@ -309,8 +310,12 @@ public struct ChatView: View {
 private struct ChatMessageSurface: View {
     @Bindable var viewModel: ChatViewModel
     @State private var lastStreamingScrollAt: Date = .distantPast
+    @State private var autoScrollPolicy = ChatAutoScrollPolicy()
+    @State private var viewportHeight: CGFloat = 0
+    @State private var bottomMaxY: CGFloat = 0
 
     private let bottomAnchorId = "chat-bottom-anchor"
+    private let scrollCoordinateSpaceName = "chat-scroll-viewport"
     private let minStreamingScrollInterval: TimeInterval = 0.12
 
     var body: some View {
@@ -322,20 +327,36 @@ private struct ChatMessageSurface: View {
                             .frame(maxWidth: .infinity, minHeight: 320)
                     } else {
                         ForEach(viewModel.messages) { message in
+                            let presentedMessage = presentedMessage(message)
                             MessageBubble(
-                                message: message,
+                                message: presentedMessage,
                                 isStreaming: isStreaming(message),
                                 showsThinking: viewModel.showsThinking(for: message.id)
                             )
                             .equatable()
                             .id(message.id)
                         }
-                        Color.clear.frame(height: 4).id(bottomAnchorId)
+                        Color.clear
+                            .frame(height: 4)
+                            .id(bottomAnchorId)
+                            .background {
+                                GeometryReader { geometry in
+                                    Color.clear.preference(
+                                        key: ChatBottomMaxYPreferenceKey.self,
+                                        value: geometry.frame(in: .named(scrollCoordinateSpaceName)).maxY
+                                    )
+                                }
+                            }
                     }
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 18)
+                .background {
+                    ChatScrollActivityMonitor(onUserScroll: userDidScroll)
+                        .frame(width: 0, height: 0)
+                }
             }
+            .coordinateSpace(name: scrollCoordinateSpaceName)
             .contentMargins(.top, 12, for: .scrollContent)
             .contentMargins(.bottom, 8, for: .scrollContent)
             .scrollContentBackground(.hidden)
@@ -347,18 +368,42 @@ private struct ChatMessageSurface: View {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .stroke(Color.primary.opacity(0.06), lineWidth: 1)
             }
-            .onChange(of: viewModel.messages.count) { _, _ in
-                scrollToBottom(proxy: proxy, animated: !viewModel.isCurrentConversationStreaming)
+            .overlay {
+                GeometryReader { geometry in
+                    Color.clear.preference(
+                        key: ChatViewportHeightPreferenceKey.self,
+                        value: geometry.size.height
+                    )
+                }
+                .allowsHitTesting(false)
             }
-            .onChange(of: viewModel.messages.last?.content) { _, _ in
+            .onPreferenceChange(ChatViewportHeightPreferenceKey.self) { height in
+                viewportHeight = height
+                updateBottomProximity()
+            }
+            .onPreferenceChange(ChatBottomMaxYPreferenceKey.self) { maxY in
+                bottomMaxY = maxY
+                updateBottomProximity()
+            }
+            .onChange(of: viewModel.messages.count) { oldCount, newCount in
+                if newCount < oldCount {
+                    scrollToBottom(proxy: proxy, animated: false, requiresStreamingFollow: true)
+                } else {
+                    scrollToBottom(proxy: proxy, animated: !viewModel.isCurrentConversationStreaming)
+                }
+            }
+            .onChange(of: viewModel.currentStreamingDraftContent) { _, _ in
                 scrollToBottomForStreamingIfNeeded(proxy: proxy)
             }
             .onChange(of: viewModel.isCurrentConversationStreaming) { _, isStreaming in
                 if isStreaming {
                     lastStreamingScrollAt = .distantPast
-                } else {
-                    scrollToBottom(proxy: proxy, animated: false)
+                } else if autoScrollPolicy.shouldFollowStreaming {
+                    scrollToBottom(proxy: proxy, animated: false, requiresStreamingFollow: true)
                 }
+            }
+            .onChange(of: viewModel.selectedConversationId) { _, _ in
+                scrollToBottom(proxy: proxy, animated: false)
             }
             .onAppear {
                 scrollToBottom(proxy: proxy, animated: false)
@@ -366,9 +411,16 @@ private struct ChatMessageSurface: View {
         }
     }
 
-    private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
+    private func scrollToBottom(
+        proxy: ScrollViewProxy,
+        animated: Bool,
+        requiresStreamingFollow: Bool = false
+    ) {
         let target = AnyHashable(bottomAnchorId)
         DispatchQueue.main.async {
+            guard !requiresStreamingFollow || autoScrollPolicy.shouldFollowStreaming else {
+                return
+            }
             if animated {
                 withAnimation(.easeOut(duration: 0.18)) {
                     proxy.scrollTo(target, anchor: .bottom)
@@ -388,7 +440,25 @@ private struct ChatMessageSurface: View {
             return
         }
         lastStreamingScrollAt = now
-        scrollToBottom(proxy: proxy, animated: false)
+        scrollToBottom(proxy: proxy, animated: false, requiresStreamingFollow: true)
+    }
+
+    private func presentedMessage(_ message: ChatMessage) -> ChatMessage {
+        guard let conversationId = viewModel.selectedConversationId else {
+            return message
+        }
+        return viewModel.presentedMessage(message, in: conversationId)
+    }
+
+    private func updateBottomProximity() {
+        guard viewportHeight > 0, bottomMaxY > 0 else { return }
+        let bottomDistance = max(0, bottomMaxY - viewportHeight)
+        let isNearBottom = autoScrollPolicy.isNearBottom(bottomDistance: Double(bottomDistance))
+        autoScrollPolicy.observeBottomProximity(isNearBottom: isNearBottom)
+    }
+
+    private func userDidScroll(bottomDistance: Double) {
+        autoScrollPolicy.userDidScroll(bottomDistance: bottomDistance)
     }
 
     private func isStreaming(_ message: ChatMessage) -> Bool {
@@ -441,5 +511,123 @@ private struct ChatMessageSurface: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(Color.black.opacity(0.05), in: Capsule())
+    }
+}
+
+private struct ChatViewportHeightPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct ChatBottomMaxYPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct ChatScrollActivityMonitor: NSViewRepresentable {
+    let onUserScroll: @MainActor (Double) -> Void
+
+    func makeNSView(context: Context) -> ChatScrollObservationView {
+        ChatScrollObservationView(onUserScroll: onUserScroll)
+    }
+
+    func updateNSView(_ nsView: ChatScrollObservationView, context: Context) {
+        nsView.onUserScroll = onUserScroll
+        nsView.attachToEnclosingScrollViewIfNeeded()
+    }
+}
+
+@MainActor
+private final class ChatScrollObservationView: NSView {
+    var onUserScroll: @MainActor (Double) -> Void
+    private weak var observedScrollView: NSScrollView?
+    private var attachmentScheduled = false
+    private var attachmentAttempts = 0
+
+    init(onUserScroll: @escaping @MainActor (Double) -> Void) {
+        self.onUserScroll = onUserScroll
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        attachmentAttempts = 0
+        attachToEnclosingScrollViewIfNeeded()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        attachmentAttempts = 0
+        attachToEnclosingScrollViewIfNeeded()
+    }
+
+    func attachToEnclosingScrollViewIfNeeded() {
+        guard let scrollView = enclosingScrollView else {
+            guard !attachmentScheduled, attachmentAttempts < 3 else { return }
+            attachmentAttempts += 1
+            attachmentScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                self?.attachmentScheduled = false
+                self?.attachToEnclosingScrollViewIfNeeded()
+            }
+            return
+        }
+        attachmentAttempts = 0
+        guard scrollView !== observedScrollView else { return }
+
+        if let observedScrollView {
+            NotificationCenter.default.removeObserver(
+                self,
+                name: NSScrollView.didLiveScrollNotification,
+                object: observedScrollView
+            )
+            NotificationCenter.default.removeObserver(
+                self,
+                name: NSScrollView.didEndLiveScrollNotification,
+                object: observedScrollView
+            )
+        }
+        observedScrollView = scrollView
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(userDidLiveScroll(_:)),
+            name: NSScrollView.didLiveScrollNotification,
+            object: scrollView
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(userDidLiveScroll(_:)),
+            name: NSScrollView.didEndLiveScrollNotification,
+            object: scrollView
+        )
+    }
+
+    @objc private func userDidLiveScroll(_ notification: Notification) {
+        guard let documentView = observedScrollView?.documentView else { return }
+        let documentBounds = documentView.bounds
+        let visibleRect = documentView.visibleRect
+        let geometry = ChatScrollViewportGeometry(
+            documentMinY: Double(documentBounds.minY),
+            documentMaxY: Double(documentBounds.maxY),
+            visibleMinY: Double(visibleRect.minY),
+            visibleMaxY: Double(visibleRect.maxY),
+            isFlipped: documentView.isFlipped
+        )
+        onUserScroll(geometry.bottomDistance)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 }

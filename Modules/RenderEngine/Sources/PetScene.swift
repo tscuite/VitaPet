@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 import SpriteKit
 
-public enum HorizontalDirection: Sendable {
+public enum HorizontalDirection: Sendable, Equatable {
     case left
     case right
 }
@@ -906,11 +906,24 @@ public final class PetScene: SKScene, @unchecked Sendable {
         petNode.run(full, withKey: animationKey)
     }
 
-    public func setFacing(_ direction: HorizontalDirection) {
+    @discardableResult
+    public func setFacing(_ direction: HorizontalDirection) -> Bool {
+        let scaleAlreadyMatchesDirection: Bool
+        switch direction {
+        case .left:
+            scaleAlreadyMatchesDirection = petNode.xScale < 0
+        case .right:
+            scaleAlreadyMatchesDirection = petNode.xScale > 0
+        }
+        guard facingDirection != direction || !scaleAlreadyMatchesDirection else {
+            return false
+        }
+
         facingDirection = direction
         let currentScale = abs(petNode.xScale == 0 ? 1 : petNode.xScale)
         petNode.xScale = direction == .left ? -currentScale : currentScale
         requestStaticRedrawIfNeeded()
+        return true
     }
 
     public func setRotation(_ angle: CGFloat) {

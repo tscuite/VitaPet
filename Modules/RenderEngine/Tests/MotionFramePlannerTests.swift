@@ -63,4 +63,37 @@ final class MotionFramePlannerTests: XCTestCase {
 
         XCTAssertFalse(session.isCurrent(currentToken))
     }
+
+    func testElapsedTimeUsesMonotonicTimestampsAndCapsLongPauses() {
+        var clock = ElapsedTickClock(maximumDelta: 0.1)
+
+        clock.reset(at: 10)
+
+        XCTAssertEqual(clock.advance(to: 10.016), 0.016, accuracy: 0.000_001)
+        XCTAssertEqual(clock.advance(to: 10.5), 0.1, accuracy: 0.000_001)
+        XCTAssertEqual(clock.advance(to: 10.4), 0, accuracy: 0.000_001)
+    }
+
+    func testPositionWriteCanOnlyBeClaimedOncePerPetAndTick() {
+        var coordinator = MovementTickCoordinator<String>()
+
+        coordinator.beginTick()
+        XCTAssertTrue(coordinator.claimPositionWrite(for: "pet-a"))
+        XCTAssertFalse(coordinator.claimPositionWrite(for: "pet-a"))
+        XCTAssertTrue(coordinator.claimPositionWrite(for: "pet-b"))
+
+        coordinator.beginTick()
+        XCTAssertTrue(coordinator.claimPositionWrite(for: "pet-a"))
+    }
+
+    func testFollowTransitionCanOnlyBeClaimedOnceAcrossTicks() {
+        var coordinator = MovementTickCoordinator<String>()
+
+        coordinator.beginTick()
+        XCTAssertTrue(coordinator.claimFollowTransition(for: "pet-a"))
+        XCTAssertFalse(coordinator.claimFollowTransition(for: "pet-a"))
+
+        coordinator.beginTick()
+        XCTAssertFalse(coordinator.claimFollowTransition(for: "pet-a"))
+    }
 }

@@ -50,10 +50,11 @@ final class BehaviorEngineTests: XCTestCase {
             petSize: 20,
             onMove: { point, _ in
                 capturedTarget.value = point
-                moveCompleted.fulfill()
             },
             onFlip: { _ in },
-            onComplete: {}
+            onComplete: {
+                moveCompleted.fulfill()
+            }
         )
 
         wait(for: [moveCompleted], timeout: 1.5)
@@ -66,6 +67,63 @@ final class BehaviorEngineTests: XCTestCase {
         XCTAssertLessThanOrEqual(target.x, 100)
         XCTAssertGreaterThanOrEqual(target.y, 0)
         XCTAssertLessThanOrEqual(target.y, 60)
+    }
+
+    func testExecuteMoveBehaviorUsesOneClockAndWritesFinalPointBeforeCompletion() {
+        let manifest = BehaviorManifest(
+            version: "1.0.0",
+            behaviors: [
+                "walk": BehaviorDefinition(
+                    type: .move,
+                    speed: 120,
+                    targetMode: "horizontal",
+                    maxDistance: 30,
+                    minDistance: 30,
+                    animation: nil,
+                    flipToDirection: true,
+                    target: nil,
+                    flipToTarget: nil,
+                    reactDistance: nil,
+                    reactAnimation: nil,
+                    activeStates: nil,
+                    action: nil
+                )
+            ],
+            idleBehaviors: ["normal": ["walk": 100]]
+        )
+        let engine = BehaviorEngine(
+            manifest: manifest,
+            screenBounds: { NSRect(x: 0, y: 0, width: 400, height: 200) }
+        )
+        let events = Box<[(kind: String, point: NSPoint?, duration: TimeInterval)]>([])
+        let completed = expectation(description: "move completed")
+        let start = NSPoint(x: 200, y: 100)
+
+        engine.executeBehavior(
+            "walk",
+            currentPosition: start,
+            petSize: 20,
+            onMove: { point, duration in
+                events.value.append(("move", point, duration))
+            },
+            onFlip: { _ in },
+            onComplete: {
+                events.value.append(("complete", nil, 0))
+                completed.fulfill()
+            }
+        )
+
+        wait(for: [completed], timeout: 1.0)
+
+        let moveEvents = events.value.filter { $0.kind == "move" }
+        XCTAssertGreaterThan(moveEvents.count, 1)
+        XCTAssertTrue(moveEvents.allSatisfy { $0.duration == 0 })
+        XCTAssertEqual(events.value.last?.kind, "complete")
+        guard let finalPoint = moveEvents.last?.point else {
+            return XCTFail("Expected a final movement point")
+        }
+        XCTAssertEqual(abs(finalPoint.x - start.x), 30, accuracy: 0.001)
+        XCTAssertEqual(finalPoint.y, start.y, accuracy: 0.001)
     }
 
     func testExecuteMoveBehavior_flipsToDirection() {
@@ -149,7 +207,7 @@ final class BehaviorEngineTests: XCTestCase {
             screenBounds: { NSRect(x: 0, y: 0, width: 300, height: 200) }
         )
 
-        let movement = expectation(description: "move callback")
+        let movement = expectation(description: "move completion")
         let currentY = CGFloat(88)
 
         engine.executeBehavior(
@@ -158,10 +216,11 @@ final class BehaviorEngineTests: XCTestCase {
             petSize: 20,
             onMove: { point, _ in
                 XCTAssertEqual(point.y, currentY)
-                movement.fulfill()
             },
             onFlip: { _ in },
-            onComplete: {}
+            onComplete: {
+                movement.fulfill()
+            }
         )
 
         wait(for: [movement], timeout: 1.0)

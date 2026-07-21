@@ -20,6 +20,8 @@ public struct MessageBubble: View, Equatable {
     }
 
     public var body: some View {
+        let parsedContent = ChatMessageParser.parse(message.content)
+
         HStack(alignment: .top, spacing: 0) {
             if isUserMessage {
                 Spacer(minLength: 56)
@@ -42,7 +44,7 @@ public struct MessageBubble: View, Equatable {
                     thinkingDisclosure(thinking: thinking)
                 }
 
-                bubble
+                bubble(reply: parsedContent.reply)
 
                 Text(timestampText)
                     .font(.caption2)
@@ -57,8 +59,8 @@ public struct MessageBubble: View, Equatable {
         }
     }
 
-    private var bubble: some View {
-        Text(verbatim: parsedContent.reply.isEmpty ? " " : parsedContent.reply)
+    private func bubble(reply: String) -> some View {
+        Text(verbatim: reply.isEmpty ? " " : reply)
             .textSelection(.enabled)
             .foregroundStyle(foregroundColor)
             .fixedSize(horizontal: false, vertical: true)
@@ -106,65 +108,6 @@ public struct MessageBubble: View, Equatable {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private struct ParsedMessage {
-        let thinking: String?
-        let reply: String
-    }
-
-    // Keep parsing out of init. `ForEach` creates candidate values for every
-    // visible message during a streaming update; `.equatable()` can then skip
-    // unchanged bubbles before their bodies (and this parser) are evaluated.
-    private var parsedContent: ParsedMessage {
-        Self.split(message.content)
-    }
-
-    /// Parse the live or canonical assistant content into reasoning + reply.
-    /// Handles four states the streaming bubble can land in:
-    ///   - no tag at all → all reply
-    ///   - `<think>...</think>{reply}` → split cleanly
-    ///   - `<think>...` mid-stream (close hasn't arrived) → show partial thinking, no reply yet
-    ///   - tagless leak `{reasoning}</think>{reply}` → reclassify prefix as thinking
-    private static func split(_ text: String) -> ParsedMessage {
-        let hasOpen = text.range(of: "<think>", options: .caseInsensitive) != nil
-        let hasClose = text.range(of: "</think>", options: .caseInsensitive) != nil
-        if !hasOpen && !hasClose {
-            return ParsedMessage(thinking: nil, reply: text)
-        }
-
-        if let openRange = text.range(of: "<think>", options: .caseInsensitive) {
-            if let closeRange = text.range(
-                of: "</think>",
-                options: .caseInsensitive,
-                range: openRange.upperBound..<text.endIndex
-            ) {
-                let thinking = String(text[openRange.upperBound..<closeRange.lowerBound])
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                let before = String(text[text.startIndex..<openRange.lowerBound])
-                let after = String(text[closeRange.upperBound..<text.endIndex])
-                let reply = (before + after).trimmingCharacters(in: .whitespacesAndNewlines)
-                return ParsedMessage(thinking: thinking.isEmpty ? nil : thinking, reply: reply)
-            }
-            // Open tag, no close yet — surface the in-progress reasoning.
-            let before = String(text[text.startIndex..<openRange.lowerBound])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let thinking = String(text[openRange.upperBound..<text.endIndex])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return ParsedMessage(thinking: thinking.isEmpty ? nil : thinking, reply: before)
-        }
-
-        // Tagless leak: stray </think> with no opener (DeepSeek-R1 sometimes
-        // does this). Treat everything before the close as reasoning.
-        if let closeRange = text.range(of: "</think>", options: .caseInsensitive) {
-            let thinking = String(text[text.startIndex..<closeRange.lowerBound])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let reply = String(text[closeRange.upperBound..<text.endIndex])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return ParsedMessage(thinking: thinking.isEmpty ? nil : thinking, reply: reply)
-        }
-
-        return ParsedMessage(thinking: nil, reply: text)
     }
 
     private var isUserMessage: Bool { message.role == .user }

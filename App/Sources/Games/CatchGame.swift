@@ -30,6 +30,7 @@ final class CatchGame: MiniGame {
     private var scores: [ObjectIdentifier: Int] = [:]
     private var baseY: [ObjectIdentifier: CGFloat] = [:]
     private var pendingItems: [DispatchWorkItem] = []
+    private var gameClock = ElapsedTickClock(maximumDelta: 0.1)
 
     func start(pets: [PetWindowController], onComplete: @escaping () -> Void) {
         self.pets = pets
@@ -51,15 +52,16 @@ final class CatchGame: MiniGame {
             baseY[key] = origin.y
         }
 
-        gameTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.tickGame()
+        gameClock.reset(at: ProcessInfo.processInfo.systemUptime)
+        gameTimer = MiniGameSupport.commonModeTimer(interval: 1.0 / 30.0, repeats: true) { [weak self] in
+            guard let self else {
+                return
             }
+            let deltaTime = self.gameClock.advance(to: ProcessInfo.processInfo.systemUptime)
+            self.tickGame(deltaTime: deltaTime)
         }
-        spawnTimer = Timer.scheduledTimer(withTimeInterval: 0.7, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.spawnItem()
-            }
+        spawnTimer = MiniGameSupport.commonModeTimer(interval: 0.7, repeats: true) { [weak self] in
+            self?.spawnItem()
         }
 
         for second in 1...20 {
@@ -127,17 +129,21 @@ final class CatchGame: MiniGame {
         items.append(item)
     }
 
-    private func tickGame() {
+    private func tickGame(deltaTime: TimeInterval) {
+        guard deltaTime > 0 else {
+            return
+        }
         let frame = MiniGameSupport.mainScreenFrame()
 
         // 每只宠物自动追最近的掉落物
-        movePetsTowardItems(in: frame)
+        movePetsTowardItems(in: frame, deltaTime: deltaTime)
 
         // 掉落物下落 + 碰撞检测
         var survivors: [FallingItem] = []
         for item in items {
             let origin = item.window.frame.origin
-            let nextOrigin = NSPoint(x: origin.x, y: origin.y - item.velocity)
+            let fallDistance = item.velocity * CGFloat(deltaTime) * 30
+            let nextOrigin = NSPoint(x: origin.x, y: origin.y - fallDistance)
             item.window.setFrameOrigin(nextOrigin)
 
             if let catcher = pets.first(where: { pet in
@@ -167,7 +173,7 @@ final class CatchGame: MiniGame {
         items = survivors
     }
 
-    private func movePetsTowardItems(in frame: NSRect) {
+    private func movePetsTowardItems(in frame: NSRect, deltaTime: TimeInterval) {
         // 为每只宠物分配最近的未被其他宠物抢占的掉落物
         var claimedItems = Set<UUID>()
 
@@ -193,7 +199,7 @@ final class CatchGame: MiniGame {
             // 朝目标 X 方向移动
             let targetX = target.window.frame.midX - window.frame.width / 2
             let dx = targetX - window.frame.origin.x
-            let moveSpeed: CGFloat = 6.0
+            let moveSpeed = CGFloat(6.0 * deltaTime * 30)
             let step = min(abs(dx), moveSpeed) * (dx > 0 ? 1 : -1)
             let newX = min(max(window.frame.origin.x + step, frame.minX), frame.maxX - window.frame.width)
             let baseYPos = baseY[ObjectIdentifier(pet)] ?? window.frame.origin.y

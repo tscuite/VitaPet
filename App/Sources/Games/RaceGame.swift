@@ -17,6 +17,7 @@ final class RaceGame: MiniGame {
     private var pauseUntil: [ObjectIdentifier: Date] = [:]
     private var finished: [PetWindowController] = []
     private var finishLine: CGFloat = 0
+    private var raceClock = ElapsedTickClock(maximumDelta: 0.1)
 
     func start(pets: [PetWindowController], onComplete: @escaping () -> Void) {
         self.pets = pets
@@ -81,10 +82,13 @@ final class RaceGame: MiniGame {
 
     private func beginRaceLoop() {
         raceTimer?.invalidate()
-        raceTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.tickRace()
+        raceClock.reset(at: ProcessInfo.processInfo.systemUptime)
+        raceTimer = MiniGameSupport.commonModeTimer(interval: 1.0 / 60.0, repeats: true) { [weak self] in
+            guard let self else {
+                return
             }
+            let deltaTime = self.raceClock.advance(to: ProcessInfo.processInfo.systemUptime)
+            self.tickRace(deltaTime: deltaTime)
         }
 
         scheduleRandomEventTimer()
@@ -92,16 +96,17 @@ final class RaceGame: MiniGame {
 
     private func scheduleRandomEventTimer() {
         eventTimer?.invalidate()
-        eventTimer = Timer.scheduledTimer(withTimeInterval: Double.random(in: 2.0...3.0), repeats: false) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.triggerRandomEvent()
-                self?.scheduleRandomEventTimer()
-            }
+        eventTimer = MiniGameSupport.commonModeTimer(
+            interval: Double.random(in: 2.0...3.0),
+            repeats: false
+        ) { [weak self] in
+            self?.triggerRandomEvent()
+            self?.scheduleRandomEventTimer()
         }
     }
 
-    private func tickRace() {
-        guard !pets.isEmpty else { return }
+    private func tickRace(deltaTime: TimeInterval) {
+        guard !pets.isEmpty, deltaTime > 0 else { return }
         let now = Date()
 
         for pet in pets where !finished.contains(where: { $0 === pet }) {
@@ -117,7 +122,8 @@ final class RaceGame: MiniGame {
             }
 
             let jitter = CGFloat.random(in: -0.8...0.8)
-            let newOrigin = NSPoint(x: window.frame.origin.x + max(1.5, speed + jitter), y: window.frame.origin.y)
+            let distance = max(1.5, speed + jitter) * CGFloat(deltaTime) * 60
+            let newOrigin = NSPoint(x: window.frame.origin.x + distance, y: window.frame.origin.y)
             window.setFrameOrigin(newOrigin)
 
             if window.frame.maxX >= finishLine {

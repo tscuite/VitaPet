@@ -10,6 +10,26 @@ public final class ChatWindowController: NSWindowController {
     private let pluginSettingsViewModel: PluginSettingsViewModel
     private let activityLogViewModel: ActivityLogViewModel
     private let statisticsViewModel: StatisticsViewModel
+    private let contentContainer: NSView
+    private lazy var chatHostingSurface = ReusableHostingSurface<
+        TabbedChatView,
+        NSHostingView<TabbedChatView>
+    >(
+        factory: { NSHostingView(rootView: $0) },
+        update: { hostingView, rootView in
+            hostingView.rootView = rootView
+        }
+    )
+    private var settingsSurfaceRevision = HostingSurfaceRevision()
+    private lazy var settingsHostingSurface = ReusableHostingSurface<
+        VersionedHostingRoot<SettingsView>,
+        NSHostingView<VersionedHostingRoot<SettingsView>>
+    >(
+        factory: { NSHostingView(rootView: $0) },
+        update: { hostingView, rootView in
+            hostingView.rootView = rootView
+        }
+    )
     private var loadSpritePackItems: @MainActor () -> [SpritePackDisplayItem] = { [] }
     private var selectedSpritePackID: @MainActor () -> String = { "default" }
     private var onSelectSpritePack: @MainActor (String) -> Void = { _ in }
@@ -104,10 +124,12 @@ public final class ChatWindowController: NSWindowController {
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 760, height: 580)
         window.center()
-        window.contentView = NSHostingView(rootView: ChatView(viewModel: chatViewModel))
+        let contentContainer = NSView(frame: contentRect)
+        window.contentView = contentContainer
 
         self.init(
             window: window,
+            contentContainer: contentContainer,
             chatViewModel: chatViewModel,
             pluginSettingsViewModel: pluginSettingsViewModel,
             activityLogViewModel: activityLogViewModel,
@@ -118,6 +140,7 @@ public final class ChatWindowController: NSWindowController {
 
     private init(
         window: NSWindow,
+        contentContainer: NSView,
         chatViewModel: ChatViewModel,
         pluginSettingsViewModel: PluginSettingsViewModel,
         activityLogViewModel: ActivityLogViewModel,
@@ -127,6 +150,7 @@ public final class ChatWindowController: NSWindowController {
         self.pluginSettingsViewModel = pluginSettingsViewModel
         self.activityLogViewModel = activityLogViewModel
         self.statisticsViewModel = statisticsViewModel
+        self.contentContainer = contentContainer
         super.init(window: window)
     }
 
@@ -144,8 +168,9 @@ public final class ChatWindowController: NSWindowController {
         window?.titleVisibility = .visible
         window?.styleMask.remove(.fullSizeContentView)
 
-        window?.contentView = NSHostingView(
-            rootView: TabbedChatView(
+        chatHostingSurface.invalidate()
+        let chatContentView = chatHostingSurface.resolve {
+            TabbedChatView(
                 viewModel: chatViewModel,
                 availablePets: listAvailablePets(),
                 chatAppearance: currentChatAppearanceSettings(),
@@ -153,7 +178,8 @@ public final class ChatWindowController: NSWindowController {
                     self?.saveAndApplyChatAppearance(enabled: enabled, opacity: opacity)
                 }
             )
-        )
+        }
+        displayContentView(chatContentView)
         applyChatWindowAppearance()
         if let window, window.frame.width < 760 {
             window.setContentSize(NSSize(width: 860, height: 640))
@@ -172,84 +198,122 @@ public final class ChatWindowController: NSWindowController {
 
     public func showSettings() {
         window?.title = "VitaPet 设置"
-        window?.contentView = NSHostingView(
-            rootView: SettingsView(
-                pluginSettingsViewModel: pluginSettingsViewModel,
-                petProfiles: petProfiles(),
-                loadPetProfiles: petProfiles,
-                spritePackItems: loadSpritePackItems(),
-                selectedSpritePackID: selectedSpritePackID(),
-                onSelectSpritePack: onSelectSpritePack,
-                onImportPack: onImportPack,
-                onExportPack: onExportPack,
-                onDeletePack: onDeletePack,
-                onRevealInFinder: onRevealInFinder,
-                onCreateTemplate: onCreateTemplate,
-                ollamaEndpoint: aiEndpoint(),
-                aiBackend: aiBackend(),
-                ollamaModel: aiModel(),
-                openAIApiKey: openAIApiKey(),
-                mcpServersJSON: mcpServersJSON(),
-                aiSystemPrompt: aiSystemPrompt(),
-                memoryWorkerEnabled: memoryWorkerEnabled(),
-                memoryWorkerEndpoint: memoryWorkerEndpoint(),
-                memoryWorkerAuthMode: memoryWorkerAuthMode(),
-                memoryWorkerUsername: memoryWorkerUsername(),
-                memoryWorkerSecret: memoryWorkerSecret(),
-                memoryWorkerScope: memoryWorkerScope(),
-                memoryWorkerSubject: memoryWorkerSubject(),
-                memoryWorkerQueryLimit: memoryWorkerQueryLimit(),
-                githubToken: githubToken(),
-                webhookEnabled: webhookEnabled(),
-                webhookPort: webhookPort(),
-                webhookSecret: webhookSecret(),
-                aiStatus: aiStatus(),
-                aiStatusProvider: aiStatus,
-                onTestConnection: onTestConnection,
-                onTestAIMemoryConnection: onTestAIMemoryConnection,
-                onTestAIMemoryWrite: onTestAIMemoryWrite,
-                onSaveAIConfig: onSaveAIConfig,
-                onSaveAIMemoryConfig: onSaveAIMemoryConfig,
-                onSaveNotificationConfig: onSaveNotificationConfig,
-                onUpdatePet: onUpdatePet,
-                onUpdatePetSound: onUpdatePetSound,
-                onUpdatePetLanguage: onUpdatePetLanguage,
-                onRemovePet: onRemovePet,
-                onAddPet: onAddPet,
-                canAddMorePets: canAddMorePets(),
-                desktopAwarenessEnabled: desktopAwarenessEnabled(),
-                desktopAwarenessRules: desktopAwarenessRules(),
-                onSetDesktopAwarenessEnabled: onSetDesktopAwarenessEnabled,
-                onSaveDesktopAwarenessRules: onSaveDesktopAwarenessRules,
-                soundEnabled: soundEnabled(),
-                soundVolume: soundVolume(),
-                onSetSoundEnabled: onSetSoundEnabled,
-                onSetSoundVolume: onSetSoundVolume,
-                weatherAwarenessEnabled: weatherAwarenessEnabled(),
-                currentWeatherSummary: currentWeatherSummary(),
-                onSetWeatherAwarenessEnabled: onSetWeatherAwarenessEnabled,
-                weatherLatitude: weatherLatitude(),
-                weatherLongitude: weatherLongitude(),
-                onSaveWeatherLocation: onSaveWeatherLocation,
-                weatherRefreshMinutes: weatherRefreshMinutes(),
-                onSetWeatherRefreshInterval: onSetWeatherRefreshInterval,
-                onCreatePlugin: onCreatePlugin,
-                onDeletePlugin: onDeletePlugin,
-                onRevealPluginInFinder: onRevealPluginInFinder,
-                onReloadPlugins: onReloadPlugins,
-                onResetLanguage: onResetLanguage,
-                onResetAttributes: onResetAttributes,
-                onResetAll: onResetAll,
-                chatWindowTranslucencyEnabled: chatWindowTranslucencyEnabled(),
-                chatWindowOpacity: chatWindowOpacity(),
-                onSaveChatAppearance: { [weak self] enabled, opacity in
-                    self?.saveAndApplyChatAppearance(enabled: enabled, opacity: opacity)
-                },
-                storageSummary: storageSummary,
-                onRefreshStorage: onRefreshStorage,
-                onMaintainStorage: onMaintainStorage
+        let settingsRevision = settingsSurfaceRevision.value
+        let settingsContentView = settingsHostingSurface.resolve {
+            VersionedHostingRoot(
+                revision: settingsRevision,
+                content: SettingsView(
+                    pluginSettingsViewModel: pluginSettingsViewModel,
+                    petProfiles: petProfiles(),
+                    loadPetProfiles: petProfiles,
+                    spritePackItems: loadSpritePackItems(),
+                    selectedSpritePackID: selectedSpritePackID(),
+                    onSelectSpritePack: { [weak self] id in
+                        guard let self else {
+                            return
+                        }
+                        onSelectSpritePack(id)
+                        invalidateSettingsSurface()
+                    },
+                    onImportPack: { [weak self] in
+                        guard let self else {
+                            return nil
+                        }
+                        let error = await onImportPack()
+                        if error == nil {
+                            invalidateSettingsSurface()
+                        }
+                        return error
+                    },
+                    onExportPack: onExportPack,
+                    onDeletePack: { [weak self] id in
+                        guard let self else {
+                            return nil
+                        }
+                        let error = await onDeletePack(id)
+                        if error == nil {
+                            invalidateSettingsSurface()
+                        }
+                        return error
+                    },
+                    onRevealInFinder: onRevealInFinder,
+                    onCreateTemplate: { [weak self] in
+                        guard let self else {
+                            return nil
+                        }
+                        let error = await onCreateTemplate()
+                        if error == nil {
+                            invalidateSettingsSurface()
+                        }
+                        return error
+                    },
+                    ollamaEndpoint: aiEndpoint(),
+                    aiBackend: aiBackend(),
+                    ollamaModel: aiModel(),
+                    openAIApiKey: openAIApiKey(),
+                    mcpServersJSON: mcpServersJSON(),
+                    aiSystemPrompt: aiSystemPrompt(),
+                    memoryWorkerEnabled: memoryWorkerEnabled(),
+                    memoryWorkerEndpoint: memoryWorkerEndpoint(),
+                    memoryWorkerAuthMode: memoryWorkerAuthMode(),
+                    memoryWorkerUsername: memoryWorkerUsername(),
+                    memoryWorkerSecret: memoryWorkerSecret(),
+                    memoryWorkerScope: memoryWorkerScope(),
+                    memoryWorkerSubject: memoryWorkerSubject(),
+                    memoryWorkerQueryLimit: memoryWorkerQueryLimit(),
+                    githubToken: githubToken(),
+                    webhookEnabled: webhookEnabled(),
+                    webhookPort: webhookPort(),
+                    webhookSecret: webhookSecret(),
+                    aiStatus: aiStatus(),
+                    aiStatusProvider: aiStatus,
+                    onTestConnection: onTestConnection,
+                    onTestAIMemoryConnection: onTestAIMemoryConnection,
+                    onTestAIMemoryWrite: onTestAIMemoryWrite,
+                    onSaveAIConfig: onSaveAIConfig,
+                    onSaveAIMemoryConfig: onSaveAIMemoryConfig,
+                    onSaveNotificationConfig: onSaveNotificationConfig,
+                    onUpdatePet: onUpdatePet,
+                    onUpdatePetSound: onUpdatePetSound,
+                    onUpdatePetLanguage: onUpdatePetLanguage,
+                    onRemovePet: onRemovePet,
+                    onAddPet: onAddPet,
+                    canAddMorePets: canAddMorePets(),
+                    desktopAwarenessEnabled: desktopAwarenessEnabled(),
+                    desktopAwarenessRules: desktopAwarenessRules(),
+                    onSetDesktopAwarenessEnabled: onSetDesktopAwarenessEnabled,
+                    onSaveDesktopAwarenessRules: onSaveDesktopAwarenessRules,
+                    soundEnabled: soundEnabled(),
+                    soundVolume: soundVolume(),
+                    onSetSoundEnabled: onSetSoundEnabled,
+                    onSetSoundVolume: onSetSoundVolume,
+                    weatherAwarenessEnabled: weatherAwarenessEnabled(),
+                    currentWeatherSummary: currentWeatherSummary(),
+                    onSetWeatherAwarenessEnabled: onSetWeatherAwarenessEnabled,
+                    weatherLatitude: weatherLatitude(),
+                    weatherLongitude: weatherLongitude(),
+                    onSaveWeatherLocation: onSaveWeatherLocation,
+                    weatherRefreshMinutes: weatherRefreshMinutes(),
+                    onSetWeatherRefreshInterval: onSetWeatherRefreshInterval,
+                    onCreatePlugin: onCreatePlugin,
+                    onDeletePlugin: onDeletePlugin,
+                    onRevealPluginInFinder: onRevealPluginInFinder,
+                    onReloadPlugins: onReloadPlugins,
+                    onResetLanguage: onResetLanguage,
+                    onResetAttributes: onResetAttributes,
+                    onResetAll: onResetAll,
+                    chatWindowTranslucencyEnabled: chatWindowTranslucencyEnabled(),
+                    chatWindowOpacity: chatWindowOpacity(),
+                    onSaveChatAppearance: { [weak self] enabled, opacity in
+                        self?.saveAndApplyChatAppearance(enabled: enabled, opacity: opacity)
+                    },
+                    storageSummary: storageSummary,
+                    onRefreshStorage: onRefreshStorage,
+                    onMaintainStorage: onMaintainStorage
+                )
             )
-        )
+        }
+        displayContentView(settingsContentView)
         applyChatWindowAppearance()
         window?.level = .floating
         showWindow(nil)
@@ -262,15 +326,25 @@ public final class ChatWindowController: NSWindowController {
 
     public func showSpritePackCreator(initialFrames: [String: [URL]] = [:]) {
         window?.title = L10n.spritePackCreatorTitle
-        window?.contentView = NSHostingView(
+        let contentView = NSHostingView(
             rootView: SpritePackCreatorView(
                 initialFrames: initialFrames,
-                onBuild: onBuildSpritePack,
+                onBuild: { [weak self] name, frames in
+                    guard let self else {
+                        return nil
+                    }
+                    let error = await onBuildSpritePack(name, frames)
+                    if error == nil {
+                        invalidateSettingsSurface()
+                    }
+                    return error
+                },
                 onDismiss: { [weak self] in
                     self?.showSettings()
                 }
             )
         )
+        displayContentView(contentView)
         applyChatWindowAppearance()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
@@ -278,7 +352,8 @@ public final class ChatWindowController: NSWindowController {
 
     public func showActivityLog() {
         window?.title = "VitaPet Activity Log"
-        window?.contentView = NSHostingView(rootView: ActivityLogView(activityLogViewModel: activityLogViewModel))
+        let contentView = NSHostingView(rootView: ActivityLogView(activityLogViewModel: activityLogViewModel))
+        displayContentView(contentView)
         applyChatWindowAppearance()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
@@ -286,7 +361,8 @@ public final class ChatWindowController: NSWindowController {
 
     public func showStatistics() {
         window?.title = "VitaPet Statistics"
-        window?.contentView = NSHostingView(rootView: StatisticsView(statisticsViewModel: statisticsViewModel))
+        let contentView = NSHostingView(rootView: StatisticsView(statisticsViewModel: statisticsViewModel))
+        displayContentView(contentView)
         applyChatWindowAppearance()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
@@ -310,6 +386,7 @@ public final class ChatWindowController: NSWindowController {
         self.onDeletePack = onDeletePack
         self.onRevealInFinder = onRevealInFinder
         self.onCreateTemplate = onCreateTemplate
+        invalidateSettingsSurface()
     }
 
     public func configureSpritePackSettings(
@@ -336,12 +413,14 @@ public final class ChatWindowController: NSWindowController {
         self.onDeletePack = { _ in nil }
         self.onRevealInFinder = { _ in }
         self.onCreateTemplate = { nil }
+        invalidateSettingsSurface()
     }
 
     public func configureSpritePackCreator(
         onBuild: @escaping @MainActor (String, [String: [URL]]) async -> String?
     ) {
         self.onBuildSpritePack = onBuild
+        invalidateSettingsSurface()
     }
 
     public func configureAISettings(
@@ -386,6 +465,7 @@ public final class ChatWindowController: NSWindowController {
         self.onTestAIMemoryWrite = onTestAIMemoryWrite
         self.onSaveAIConfig = onSaveAIConfig
         self.onSaveAIMemoryConfig = onSaveAIMemoryConfig
+        invalidateSettingsSurface()
     }
 
     public func configureNotificationSettings(
@@ -400,6 +480,7 @@ public final class ChatWindowController: NSWindowController {
         self.webhookPort = webhookPort
         self.webhookSecret = webhookSecret
         self.onSaveNotificationConfig = onSaveNotificationConfig
+        invalidateSettingsSurface()
     }
 
     public func configureChatAppearance(
@@ -410,6 +491,7 @@ public final class ChatWindowController: NSWindowController {
         self.chatWindowTranslucencyEnabled = translucencyEnabled
         self.chatWindowOpacity = opacity
         self.onSaveChatAppearance = onSave
+        invalidateSettingsSurface()
         applyChatWindowAppearance()
     }
 
@@ -421,6 +503,7 @@ public final class ChatWindowController: NSWindowController {
         storageSummary = summary
         onRefreshStorage = onRefresh
         onMaintainStorage = onMaintain
+        invalidateSettingsSurface()
     }
 
     public func configurePetManagement(
@@ -439,6 +522,7 @@ public final class ChatWindowController: NSWindowController {
         self.onRemovePet = onRemovePet
         self.onAddPet = onAddPet
         self.canAddMorePets = canAddMorePets
+        invalidateSettingsSurface()
     }
 
     public func configureResetCallbacks(
@@ -449,6 +533,7 @@ public final class ChatWindowController: NSWindowController {
         self.onResetLanguage = onResetLanguage
         self.onResetAttributes = onResetAttributes
         self.onResetAll = onResetAll
+        invalidateSettingsSurface()
     }
 
     public func configureDesktopAwarenessSettings(
@@ -461,6 +546,7 @@ public final class ChatWindowController: NSWindowController {
         self.desktopAwarenessRules = rules
         self.onSetDesktopAwarenessEnabled = onSetEnabled
         self.onSaveDesktopAwarenessRules = onSaveRules
+        invalidateSettingsSurface()
     }
 
     public func configureWeatherSettings(
@@ -477,6 +563,7 @@ public final class ChatWindowController: NSWindowController {
         self.weatherLatitude = latitude
         self.weatherLongitude = longitude
         self.onSaveWeatherLocation = onSaveLocation
+        invalidateSettingsSurface()
     }
 
     public func configureSoundSettings(
@@ -489,6 +576,7 @@ public final class ChatWindowController: NSWindowController {
         self.soundVolume = soundVolume
         self.onSetSoundEnabled = onSetSoundEnabled
         self.onSetSoundVolume = onSetSoundVolume
+        invalidateSettingsSurface()
     }
 
     public func configureWeatherRefresh(
@@ -497,6 +585,7 @@ public final class ChatWindowController: NSWindowController {
     ) {
         self.weatherRefreshMinutes = refreshMinutes
         self.onSetWeatherRefreshInterval = onSetInterval
+        invalidateSettingsSurface()
     }
 
     public func configureChatConversations(
@@ -508,6 +597,7 @@ public final class ChatWindowController: NSWindowController {
         self.onDeleteConversation = onDeleteConversation
         self.onUpdateConversationParticipants = onUpdateConversationParticipants
         chatViewModel.onDeleteConversation = onDeleteConversation
+        invalidateSettingsSurface()
     }
 
     public func removePetConversations(petId: UUID) {
@@ -561,6 +651,25 @@ public final class ChatWindowController: NSWindowController {
         self.onRevealPluginInFinder = onRevealPluginInFinder
         self.onReloadPlugins = onReloadPlugins
         self.onCreatePlugin = onCreatePlugin
+        invalidateSettingsSurface()
+    }
+
+    private func invalidateSettingsSurface() {
+        settingsSurfaceRevision.advance()
+        settingsHostingSurface.invalidate()
+    }
+
+    private func displayContentView(_ contentView: NSView) {
+        guard contentView.superview !== contentContainer else {
+            return
+        }
+
+        for displayedView in contentContainer.subviews {
+            displayedView.removeFromSuperview()
+        }
+        contentView.frame = contentContainer.bounds
+        contentView.autoresizingMask = [.width, .height]
+        contentContainer.addSubview(contentView)
     }
 
     private func currentChatAppearanceSettings() -> ChatAppearanceSettings {
@@ -576,6 +685,7 @@ public final class ChatWindowController: NSWindowController {
             opacity: opacity
         )
         onSaveChatAppearance(settings.translucencyEnabled, settings.opacity)
+        invalidateSettingsSurface()
         applyChatWindowAppearance(
             enabled: settings.translucencyEnabled,
             opacity: settings.opacity

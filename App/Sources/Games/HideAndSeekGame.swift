@@ -1,4 +1,5 @@
 import AppKit
+import RenderEngine
 
 @MainActor
 final class HideAndSeekGame: MiniGame {
@@ -16,10 +17,14 @@ final class HideAndSeekGame: MiniGame {
     private var timeoutTimer: Timer?
     private var pendingItems: [DispatchWorkItem] = []
     private var seekingStarted = false
+    private var movementClock = ElapsedTickClock(maximumDelta: 0.1)
+    private var movementCoordinator = MovementTickCoordinator<ObjectIdentifier>()
 
     func start(pets: [PetWindowController], onComplete: @escaping () -> Void) {
         self.pets = pets
         self.onComplete = onComplete
+        foundIDs.removeAll(keepingCapacity: true)
+        movementCoordinator.reset()
 
         seeker = pets.randomElement()
         hiders = pets.filter { pet in
@@ -36,10 +41,8 @@ final class HideAndSeekGame: MiniGame {
             self?.beginSeeking()
         })
 
-        timeoutTimer = Timer.scheduledTimer(withTimeInterval: 20.0, repeats: false) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.finishGame(foundAll: false)
-            }
+        timeoutTimer = MiniGameSupport.commonModeTimer(interval: 20.0, repeats: false) { [weak self] in
+            self?.finishGame(foundAll: false)
         }
     }
 
@@ -52,6 +55,7 @@ final class HideAndSeekGame: MiniGame {
         pendingItems.removeAll()
         targetPositions.removeAll()
         foundIDs.removeAll()
+        movementCoordinator.reset()
         pets.removeAll()
         hiders.removeAll()
         seeker = nil
@@ -72,10 +76,13 @@ final class HideAndSeekGame: MiniGame {
         }
 
         movementTimer?.invalidate()
-        movementTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.tickMovement()
+        movementClock.reset(at: ProcessInfo.processInfo.systemUptime)
+        movementTimer = MiniGameSupport.commonModeTimer(interval: 1.0 / 60.0, repeats: true) { [weak self] in
+            guard let self else {
+                return
             }
+            let deltaTime = self.movementClock.advance(to: ProcessInfo.processInfo.systemUptime)
+            self.tickMovement(deltaTime: deltaTime)
         }
     }
 
@@ -85,11 +92,15 @@ final class HideAndSeekGame: MiniGame {
         seeker?.showBubble("我来找啦！", duration: 1.5)
     }
 
-    private func tickMovement() {
+    private func tickMovement(deltaTime: TimeInterval) {
+        movementCoordinator.beginTick()
+        guard deltaTime > 0 else {
+            return
+        }
         let frame = MiniGameSupport.mainScreenFrame()
-        let speed: CGFloat = 3.5
+        let hiderStep = CGFloat(deltaTime) * 3.5 * 60
 
-        for pet in hiders {
+        for pet in hiders where !foundIDs.contains(ObjectIdentifier(pet)) {
             let key = ObjectIdentifier(pet)
             guard let target = targetPositions[key], let window = pet.window else { continue }
             let current = window.frame.origin
@@ -98,12 +109,12 @@ final class HideAndSeekGame: MiniGame {
             let distance = hypot(dx, dy)
             guard distance > 2 else { continue }
 
-            let step = min(speed, distance)
+            let step = min(hiderStep, distance)
             let next = NSPoint(
                 x: current.x + (dx / distance) * step,
                 y: current.y + (dy / distance) * step
             )
-            window.setFrameOrigin(MiniGameSupport.clamp(origin: next, for: pet, in: frame))
+            writePosition(MiniGameSupport.clamp(origin: next, for: pet, in: frame), for: pet)
         }
 
         guard seekingStarted, let seeker, let seekerWindow = seeker.window else { return }
@@ -126,12 +137,12 @@ final class HideAndSeekGame: MiniGame {
             let dy = destination.y - current.y
             let distance = hypot(dx, dy)
             if distance > 1 {
-                let step = min(4.2, distance)
+                let step = min(CGFloat(deltaTime) * 4.2 * 60, distance)
                 let next = NSPoint(
                     x: current.x + (dx / distance) * step,
                     y: current.y + (dy / distance) * step
                 )
-                seekerWindow.setFrameOrigin(MiniGameSupport.clamp(origin: next, for: seeker, in: frame))
+                writePosition(MiniGameSupport.clamp(origin: next, for: seeker, in: frame), for: seeker)
             }
 
             if MiniGameSupport.distance(target.windowCenter, seeker.windowCenter) <= 80 {
@@ -140,7 +151,6 @@ final class HideAndSeekGame: MiniGame {
                     foundIDs.insert(targetID)
                     target.transitionToState("react")
                     target.showBubble("被发现了！", duration: 1.2)
-                    targetPositions[targetID] = seekerWindow.frame.origin
                 }
             }
         }
@@ -148,7 +158,10 @@ final class HideAndSeekGame: MiniGame {
         let foundPets = hiders.filter { foundIDs.contains(ObjectIdentifier($0)) }
         for (index, pet) in foundPets.enumerated() {
             guard let window = pet.window else { continue }
-            pet.transitionToState("follow")
+            let petID = ObjectIdentifier(pet)
+            if movementCoordinator.claimFollowTransition(for: petID) {
+                pet.transitionToState("follow")
+            }
             let offsetTarget = NSPoint(
                 x: seekerWindow.frame.origin.x - CGFloat(50 + (index * 20)),
                 y: seekerWindow.frame.origin.y + CGFloat((index % 2 == 0 ? 1 : -1) * 26)
@@ -158,13 +171,20 @@ final class HideAndSeekGame: MiniGame {
             let dy = offsetTarget.y - current.y
             let distance = hypot(dx, dy)
             guard distance > 2 else { continue }
-            let step = min(3.6, distance)
+            let step = min(CGFloat(deltaTime) * 3.6 * 60, distance)
             let next = NSPoint(
                 x: current.x + (dx / distance) * step,
                 y: current.y + (dy / distance) * step
             )
-            window.setFrameOrigin(MiniGameSupport.clamp(origin: next, for: pet, in: frame))
+            writePosition(MiniGameSupport.clamp(origin: next, for: pet, in: frame), for: pet)
         }
+    }
+
+    private func writePosition(_ origin: NSPoint, for pet: PetWindowController) {
+        guard movementCoordinator.claimPositionWrite(for: ObjectIdentifier(pet)) else {
+            return
+        }
+        pet.window?.setFrameOrigin(origin)
     }
 
     private func finishGame(foundAll: Bool) {

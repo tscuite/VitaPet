@@ -404,6 +404,122 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.messages.map(\.content), ["hello"])
     }
 
+    func testStreamingSnapshots_doNotReplaceLargeSettledHistoryUntilFinalCommit() async {
+        let replyStream = ControlledReplyStream()
+        var callbackCount = 0
+        let viewModel = ChatViewModel(
+            sendToAI: { _, _, _ in replyStream.stream },
+            getAIStatus: { .ready }
+        )
+        let thread = ConversationThread(id: "c1", type: .single, participantIds: [], title: "First")
+        let history = (0..<500).map { ChatMessage(role: .user, content: "history \($0)") }
+        viewModel.loadConversations([thread])
+        viewModel.loadMessages(for: "c1", messages: history)
+        viewModel.onAssistantReplied = { _, _ in callbackCount += 1 }
+
+        viewModel.inputText = "hello"
+        viewModel.sendMessage()
+        await waitUntil {
+            viewModel.isStreaming && viewModel.messages.count == 502 && replyStream.isReady
+        }
+        let revisionAfterPlaceholder = viewModel.settledMessagesRevision
+        guard let settledPlaceholder = viewModel.messages.last else {
+            XCTFail("Expected an assistant placeholder")
+            return
+        }
+
+        var expectedDraft = ""
+        for chunk in ["one", " two", " three"] {
+            if !expectedDraft.isEmpty {
+                try? await Task.sleep(for: .milliseconds(60))
+            }
+            expectedDraft += chunk
+            replyStream.yield(chunk)
+            await waitUntil { viewModel.currentStreamingDraftContent == expectedDraft }
+            XCTAssertEqual(viewModel.settledMessagesRevision, revisionAfterPlaceholder)
+            XCTAssertEqual(viewModel.messages.last?.content, "")
+        }
+
+        XCTAssertEqual(
+            viewModel.presentedMessage(settledPlaceholder, in: "c1").content,
+            expectedDraft
+        )
+
+        replyStream.finish()
+        await waitUntil { !viewModel.isStreaming }
+
+        XCTAssertEqual(viewModel.settledMessagesRevision, revisionAfterPlaceholder + 1)
+        XCTAssertEqual(viewModel.messages.last?.content, expectedDraft)
+        XCTAssertEqual(callbackCount, 1)
+    }
+
+    func testStreamingDraft_isHiddenWhenAnotherConversationIsSelected() async {
+        let replyStream = ControlledReplyStream()
+        let viewModel = ChatViewModel(
+            sendToAI: { _, _, _ in replyStream.stream },
+            getAIStatus: { .ready }
+        )
+        let first = ConversationThread(id: "c1", type: .single, participantIds: [], title: "First")
+        let second = ConversationThread(id: "c2", type: .single, participantIds: [], title: "Second")
+        let secondMessage = ChatMessage(role: .assistant, content: "settled second")
+        viewModel.loadConversations([first, second])
+        viewModel.loadMessages(for: "c2", messages: [secondMessage])
+
+        viewModel.inputText = "hello"
+        viewModel.sendMessage()
+        await waitUntil {
+            viewModel.isStreaming && viewModel.messages.count == 2 && replyStream.isReady
+        }
+        guard let originPlaceholder = viewModel.messages.last else {
+            XCTFail("Expected an assistant placeholder")
+            return
+        }
+        replyStream.yield("partial")
+        await waitUntil { viewModel.currentStreamingDraftContent == "partial" }
+        XCTAssertEqual(viewModel.presentedMessage(originPlaceholder, in: "c1").content, "partial")
+
+        viewModel.selectConversation("c2")
+
+        XCTAssertNil(viewModel.currentStreamingDraftContent)
+        XCTAssertEqual(viewModel.messages, [secondMessage])
+        XCTAssertEqual(viewModel.presentedMessage(secondMessage, in: "c2"), secondMessage)
+
+        viewModel.selectConversation("c1")
+        XCTAssertEqual(viewModel.currentStreamingDraftContent, "partial")
+        XCTAssertEqual(viewModel.presentedMessage(originPlaceholder, in: "c1").content, "partial")
+
+        viewModel.cancelStreaming()
+        await waitUntil { !viewModel.isStreaming && replyStream.isTerminated }
+    }
+
+    func testCancelStreaming_withPartialDraftCommitsOnceWithoutReplyCallback() async {
+        let replyStream = ControlledReplyStream()
+        var callbackCount = 0
+        let viewModel = ChatViewModel(
+            sendToAI: { _, _, _ in replyStream.stream },
+            getAIStatus: { .ready }
+        )
+        let thread = ConversationThread(id: "c1", type: .single, participantIds: [], title: "First")
+        viewModel.loadConversations([thread])
+        viewModel.onAssistantReplied = { _, _ in callbackCount += 1 }
+        viewModel.inputText = "hello"
+        viewModel.sendMessage()
+        await waitUntil {
+            viewModel.isStreaming && viewModel.messages.count == 2 && replyStream.isReady
+        }
+        replyStream.yield("partial")
+        await waitUntil { viewModel.currentStreamingDraftContent == "partial" }
+        let revisionBeforeCancel = viewModel.settledMessagesRevision
+
+        viewModel.cancelStreaming()
+        await waitUntil { !viewModel.isStreaming && replyStream.isTerminated }
+
+        XCTAssertEqual(viewModel.settledMessagesRevision, revisionBeforeCancel + 1)
+        XCTAssertEqual(viewModel.messages.map(\.content), ["hello", "partial"])
+        XCTAssertEqual(viewModel.conversations.first?.lastMessage, "partial")
+        XCTAssertEqual(callbackCount, 0)
+    }
+
     func testStopAcceptingWork_waitsForAcceptedSlashCommandAndRejectsLateInput() async {
         let blocker = SlashCommandBlocker()
         let viewModel = ChatViewModel()

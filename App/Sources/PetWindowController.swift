@@ -29,10 +29,11 @@ public final class PetWindowController: NSWindowController {
     private var isDoubleClickPending = false
     private var behaviorEngine: BehaviorEngine!
     private(set) var isExecutingBehavior = false
-    private var currentTrackingTarget: (@MainActor () -> NSPoint?)?
+    private var currentTrackingTarget: (@MainActor @Sendable () -> NSPoint?)?
     private var debugMoveTimer: Timer?
     private var movementTimer: Timer?
     private var pendingMovementStartTask: Task<Void, Never>?
+    private var cursorReactionTask: Task<Void, Never>?
     private var movementSession = MovementSessionTracker()
     private var wantsPetVisible = false
     private var visibilityGeneration: UInt = 0
@@ -114,6 +115,24 @@ public final class PetWindowController: NSWindowController {
         applyAnimation(.idle)
     }
 
+    /// Hands all window-position ownership to a mini-game before it starts
+    /// writing frames directly.
+    func claimMovementOwnershipForMiniGame() {
+        cancelAutonomousMovement()
+    }
+
+    private func cancelAutonomousMovement() {
+        behaviorEngine.cancelCurrentBehavior()
+        behaviorEngine.stopCursorTracking()
+        cursorReactionTask?.cancel()
+        cursorReactionTask = nil
+        debugMoveTimer?.invalidate()
+        debugMoveTimer = nil
+        cancelMovementSession()
+        currentTrackingTarget = nil
+        isExecutingBehavior = false
+    }
+
     var isDesktopBehaviorActive: Bool {
         desktopBehaviorActive
     }
@@ -168,10 +187,19 @@ public final class PetWindowController: NSWindowController {
         guard let targetState = ActionComboPlanner.playbackState(for: targetAnimation) else {
             return
         }
+        if afterDelay <= 0, animationStateSnapshot == targetState {
+            desktopBehaviorActive = activatesDesktopBehavior
+            return
+        }
 
         Task { @MainActor in
             if afterDelay > 0 {
                 try? await Task.sleep(for: .seconds(afterDelay))
+            }
+
+            if animationStateSnapshot == targetState {
+                desktopBehaviorActive = activatesDesktopBehavior
+                return
             }
 
             let currentState = await stateMachine.currentState
@@ -305,6 +333,8 @@ public final class PetWindowController: NSWindowController {
         let generation = visibilityGeneration
         behaviorEngine.cancelCurrentBehavior()
         behaviorEngine.stopCursorTracking()
+        cursorReactionTask?.cancel()
+        cursorReactionTask = nil
         debugMoveTimer?.invalidate()
         debugMoveTimer = nil
         cancelMovementSession()
@@ -359,6 +389,10 @@ public final class PetWindowController: NSWindowController {
     }
 
     func selectSpritePack(id: String) {
+        guard petIdentity.spritePack != id else {
+            return
+        }
+
         let packs = availableSpritePacks()
         let selectedDirectory = packs.first(where: { $0.id == id })?.directory
         let resolvedID = id
@@ -367,10 +401,6 @@ public final class PetWindowController: NSWindowController {
         reloadSounds(for: selectedDirectory)
         applyAnimation(.idle)
         updatePetScale(for: petScene.size)
-
-        guard petIdentity.spritePack != resolvedID else {
-            return
-        }
 
         do {
             try updatePetIdentity { $0.spritePack = resolvedID }
@@ -400,7 +430,7 @@ public final class PetWindowController: NSWindowController {
         }
     }
 
-    func setTrackingTarget(_ target: (@MainActor () -> NSPoint?)?) {
+    func setTrackingTarget(_ target: (@MainActor @Sendable () -> NSPoint?)?) {
         currentTrackingTarget = target
     }
 
@@ -421,9 +451,7 @@ public final class PetWindowController: NSWindowController {
             singleClickWorkItem?.cancel()
             singleClickWorkItem = nil
         }
-        behaviorEngine.cancelCurrentBehavior()
-        behaviorEngine.stopCursorTracking()
-        isExecutingBehavior = false
+        cancelAutonomousMovement()
         dragStartMouseLocation = NSEvent.mouseLocation
         dragStartWindowOrigin = window.frame.origin
         hasDragged = false
@@ -890,6 +918,8 @@ public final class PetWindowController: NSWindowController {
         petScene.setRenderingVisible(false)
         behaviorEngine.cancelCurrentBehavior()
         behaviorEngine.stopCursorTracking()
+        cursorReactionTask?.cancel()
+        cursorReactionTask = nil
         debugMoveTimer?.invalidate()
         debugMoveTimer = nil
         cancelMovementSession()
@@ -1284,87 +1314,62 @@ public final class PetWindowController: NSWindowController {
             return
         }
 
-        cancelMovementSession()
+        let movementToken = beginMovementSession()
+        behaviorEngine.stopCursorTracking()
+        cursorReactionTask?.cancel()
+        cursorReactionTask = nil
         isExecutingBehavior = true
         let isJump = behaviorEngine.behaviorDefinition(for: behaviorName)?.type == .jump
-        let onMove: @Sendable (NSPoint, TimeInterval) -> Void = { [weak self] target, duration in
-            Task { @MainActor [weak self] in
-                guard let self, let window = self.window else { return }
-                guard duration > 0 else {
-                    window.setFrameOrigin(target)
-                    self.repositionBubble()
-                    return
-                }
-
-                let start = window.frame.origin
-                let fps = TimeInterval(PetScene.activeFramesPerSecond)
-                let startTime = CACurrentMediaTime()
-                let movementToken = self.beginMovementSession()
-                let timer = Timer(timeInterval: 1.0 / fps, repeats: true) { [weak self] timer in
-                    let elapsed = CACurrentMediaTime() - startTime
-                    let point = MotionFramePlanner.point(
-                        from: start,
-                        to: target,
-                        elapsed: elapsed,
-                        duration: duration
-                    )
-                    let shouldFinish = elapsed >= duration
-                    if shouldFinish {
-                        timer.invalidate()
-                    }
-
-                    MainActor.assumeIsolated {
-                        guard let self,
-                              let window = self.window,
-                              self.movementSession.isCurrent(movementToken) else {
-                            return
-                        }
-
-                        window.setFrameOrigin(shouldFinish ? target : point)
-                        self.repositionBubble()
-
-                        if shouldFinish {
-                            self.movementTimer = nil
-                        }
-                    }
-                }
-                self.movementTimer = timer
-                RunLoop.main.add(timer, forMode: .common)
+        let onMove: @MainActor @Sendable (NSPoint, TimeInterval) -> Void = { [weak self] target, _ in
+            guard let self,
+                  let window = self.window,
+                  self.movementSession.isCurrent(movementToken) else {
+                return
             }
+            window.setFrameOrigin(target)
+            self.repositionBubble()
         }
-        let onFlip: @Sendable (Bool) -> Void = { [weak self] faceLeft in
-            Task { @MainActor in
-                self?.petScene.setFacing(faceLeft ? .left : .right)
+        let onFlip: @MainActor @Sendable (Bool) -> Void = { [weak self] faceLeft in
+            guard let self, self.movementSession.isCurrent(movementToken) else {
+                return
             }
+            self.petScene.setFacing(faceLeft ? .left : .right)
         }
-        let onComplete: @Sendable () -> Void = { [weak self] in
-            Task { @MainActor in
-                guard let self else {
-                    return
-                }
+        let onComplete: @MainActor @Sendable () -> Void = { [weak self] in
+            guard let self, self.movementSession.isCurrent(movementToken) else {
+                return
+            }
+            self.isExecutingBehavior = false
+            self.currentTrackingTarget = nil
+            self.persistWindowPosition()
 
-                self.cancelMovementSession()
-                self.isExecutingBehavior = false
-                self.currentTrackingTarget = nil
-                if isJump {
-                    do {
-                        try await Task.sleep(for: .milliseconds(180))
-                    } catch {
-                        return
-                    }
-                }
-
+            guard isJump else {
                 self.applyAnimation(.idle)
                 self.startCursorTrackingIfNeeded()
-                self.persistWindowPosition()
+                return
+            }
+
+            self.pendingMovementStartTask = Task { [weak self] in
+                do {
+                    try await Task.sleep(for: .milliseconds(180))
+                } catch {
+                    return
+                }
+                guard let self, self.movementSession.isCurrent(movementToken) else {
+                    return
+                }
+                self.pendingMovementStartTask = nil
+                self.applyAnimation(.idle)
+                self.startCursorTrackingIfNeeded()
             }
         }
-        let onLand: (@Sendable () -> Void)?
+        let onLand: (@MainActor @Sendable () -> Void)?
         if isJump {
             onLand = { [weak self] in
-                _ = Task { @MainActor in
-                    self?.applyAnimation(.bounce)
+                guard let self, self.movementSession.isCurrent(movementToken) else {
+                    return
                 }
+                self.applyAnimation(.bounce)
             }
         } else {
             onLand = nil
@@ -1390,28 +1395,28 @@ public final class PetWindowController: NSWindowController {
 
         behaviorEngine.startCursorTracking(
             petCenter: { [weak self] in
-                let center = MainActor.assumeIsolated {
-                    self?.currentPetCenter() ?? .zero
-                }
-                return center
+                self?.currentPetCenter() ?? .zero
             },
             onFlip: { [weak self] faceLeft in
-                Task { @MainActor in
-                    self?.petScene.setFacing(faceLeft ? .left : .right)
-                }
+                self?.petScene.setFacing(faceLeft ? .left : .right)
             },
             onReact: { [weak self] in
                 guard let self else {
                     return
                 }
-                Task { @MainActor in
-                    self.applyAnimation(.react)
-                    self.showBubble(self.bubbleText(for: .singleClick))
+                self.cursorReactionTask?.cancel()
+                self.applyAnimation(.react)
+                self.showBubble(self.bubbleText(for: .singleClick))
+                self.cursorReactionTask = Task { [weak self] in
+                    guard let self else {
+                        return
+                    }
                     do {
                         try await Task.sleep(for: .seconds(1))
                     } catch {
                         return
                     }
+                    self.cursorReactionTask = nil
                     self.applyAnimation(.idle)
                     self.startCursorTrackingIfNeeded()
                 }

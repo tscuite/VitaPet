@@ -39,6 +39,14 @@ final class PetSceneTests: XCTestCase {
         XCTAssertEqual(scene.petNode.yScale, 1, accuracy: 0.0001)
     }
 
+    func testSetFacingShortCircuitsWhenDirectionAndScaleAlreadyMatch() {
+        let scene = PetScene(size: CGSize(width: 64, height: 64), manifest: testManifest())
+
+        XCTAssertFalse(scene.setFacing(.right))
+        XCTAssertTrue(scene.setFacing(.left))
+        XCTAssertFalse(scene.setFacing(.left))
+    }
+
     func testScaleBaselineKeepsLeftFacingSignAcrossPulseAndRestoreTargets() {
         let baseline = SpriteScaleBaseline(xScale: -1, yScale: 1)
 
