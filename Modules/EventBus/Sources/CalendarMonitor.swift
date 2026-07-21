@@ -8,6 +8,7 @@ public final class CalendarMonitor: EventSource, @unchecked Sendable {
     private var eventBus: EventBus?
     private var isRunning = false
     private var checkTimer: Timer?
+    private var callbackTracker: EventPublicationTracker?
     private let eventStore = EKEventStore()
     private let requestAccessHandler: @MainActor @Sendable (EKEventStore) async throws -> Bool
     private var remindedEventIDs: Set<String> = []
@@ -40,6 +41,8 @@ public final class CalendarMonitor: EventSource, @unchecked Sendable {
 
         isRunning = true
         self.eventBus = eventBus
+        let callbackTracker = EventPublicationTracker()
+        self.callbackTracker = callbackTracker
 
         do {
             let granted = try await requestCalendarAccess()
@@ -59,16 +62,19 @@ public final class CalendarMonitor: EventSource, @unchecked Sendable {
                 return
             }
 
-            Task { @MainActor in
-                await self.checkUpcomingEvents()
+            callbackTracker.submit { [weak self] in
+                await self?.checkUpcomingEvents()
             }
         }
     }
 
     public func stop() async {
         isRunning = false
+        callbackTracker?.stopAccepting()
         checkTimer?.invalidate()
         checkTimer = nil
+        await callbackTracker?.drain()
+        callbackTracker = nil
         eventBus = nil
     }
 
@@ -91,6 +97,8 @@ public final class CalendarMonitor: EventSource, @unchecked Sendable {
 
     private func resetStateAfterStartFailure() {
         isRunning = false
+        callbackTracker?.stopAccepting()
+        callbackTracker = nil
         eventBus = nil
     }
 

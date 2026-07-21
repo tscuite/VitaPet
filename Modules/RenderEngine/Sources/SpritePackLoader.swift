@@ -39,8 +39,9 @@ public struct SpritePackLoader: Sendable {
 
     /// Load the bundled default manifest from SPM resources
     public static func loadBundledManifest() -> SpriteManifest {
-        if let url = Bundle.module.url(forResource: "manifest", withExtension: "json", subdirectory: "Resources") ??
-                      Bundle.module.url(forResource: "manifest", withExtension: "json"),
+        let resourceBundle = RenderEngineResourceBundle.current
+        if let url = resourceBundle.url(forResource: "manifest", withExtension: "json", subdirectory: "Resources") ??
+                      resourceBundle.url(forResource: "manifest", withExtension: "json"),
            let data = try? Data(contentsOf: url),
            let manifest = try? JSONDecoder().decode(SpriteManifest.self, from: data) {
             return manifest
@@ -49,8 +50,9 @@ public struct SpritePackLoader: Sendable {
     }
 
     public static func loadBundledBehaviorManifest() -> BehaviorManifest {
-        if let url = Bundle.module.url(forResource: "behavior", withExtension: "json", subdirectory: "Resources") ??
-                      Bundle.module.url(forResource: "behavior", withExtension: "json"),
+        let resourceBundle = RenderEngineResourceBundle.current
+        if let url = resourceBundle.url(forResource: "behavior", withExtension: "json", subdirectory: "Resources") ??
+                      resourceBundle.url(forResource: "behavior", withExtension: "json"),
            let data = try? Data(contentsOf: url),
            let manifest = try? JSONDecoder().decode(BehaviorManifest.self, from: data) {
             return manifest
@@ -305,12 +307,13 @@ public struct SpritePackLoader: Sendable {
 
     public static func bundledSpritePacksDirectory() -> URL? {
         let fileManager = FileManager.default
-        let directURL = Bundle.module.resourceURL?.appendingPathComponent("SpritePacks", isDirectory: true)
+        let resourceURL = RenderEngineResourceBundle.current.resourceURL
+        let directURL = resourceURL?.appendingPathComponent("SpritePacks", isDirectory: true)
         if let directURL, fileManager.fileExists(atPath: directURL.path) {
             return directURL
         }
 
-        let nestedURL = Bundle.module.resourceURL?
+        let nestedURL = resourceURL?
             .appendingPathComponent("Resources", isDirectory: true)
             .appendingPathComponent("SpritePacks", isDirectory: true)
         if let nestedURL, fileManager.fileExists(atPath: nestedURL.path) {
@@ -334,11 +337,12 @@ public struct SpritePackLoader: Sendable {
     }
 
     private static func bundledResourcesDirectory() -> URL {
-        if let resourceURL = Bundle.module.resourceURL?.appendingPathComponent("Resources", isDirectory: true),
+        let bundleResourceURL = RenderEngineResourceBundle.current.resourceURL
+        if let resourceURL = bundleResourceURL?.appendingPathComponent("Resources", isDirectory: true),
            FileManager.default.fileExists(atPath: resourceURL.path) {
             return resourceURL
         }
 
-        return Bundle.module.resourceURL ?? spritePacksDirectory()
+        return bundleResourceURL ?? spritePacksDirectory()
     }
 }

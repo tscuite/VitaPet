@@ -1,6 +1,27 @@
 import CoreGraphics
 import Foundation
 
+/// Invalidates delayed/timer-driven movement callbacks when a newer movement
+/// supersedes them or movement is cancelled.
+public struct MovementSessionTracker: Sendable {
+    private var generation: UInt = 0
+
+    public init() {}
+
+    public mutating func begin() -> UInt {
+        generation &+= 1
+        return generation
+    }
+
+    public mutating func cancel() {
+        generation &+= 1
+    }
+
+    public func isCurrent(_ token: UInt) -> Bool {
+        token == generation
+    }
+}
+
 public enum MotionFramePlanner {
     public static func steps(forDuration duration: TimeInterval, frameRate: TimeInterval) -> Int {
         guard duration > 0, frameRate > 0 else {

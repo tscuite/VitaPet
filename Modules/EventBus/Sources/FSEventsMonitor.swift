@@ -7,6 +7,7 @@ public actor FSEventsMonitor: EventSource {
     private final class CallbackContext: @unchecked Sendable {
         let eventBus: EventBus
         let excludedRoots: [String]
+        let publicationTracker = EventPublicationTracker()
 
         init(eventBus: EventBus, excludedRoots: [String]) {
             self.eventBus = eventBus
@@ -31,6 +32,8 @@ public actor FSEventsMonitor: EventSource {
             .takeUnretainedValue()
         let paths = unsafeBitCast(eventPaths, to: CFArray.self) as NSArray
         let eventBus = context.eventBus
+        var acceptedEvents: [AppEvent] = []
+        acceptedEvents.reserveCapacity(numEvents)
 
         for index in 0..<numEvents {
             guard let changedPath = paths[index] as? String else {
@@ -45,8 +48,14 @@ public actor FSEventsMonitor: EventSource {
             }
 
             let flags = eventFlags[Int(index)]
-            Task {
-                await eventBus.publish(.fileChanged(path: changedPath, flags: flags))
+            acceptedEvents.append(.fileChanged(path: changedPath, flags: flags))
+        }
+
+        guard !acceptedEvents.isEmpty else { return }
+        let eventsToPublish = acceptedEvents
+        context.publicationTracker.submit {
+            for event in eventsToPublish {
+                await eventBus.publish(event)
             }
         }
     }
@@ -106,7 +115,7 @@ public actor FSEventsMonitor: EventSource {
             latency,
             streamFlags
         ) else {
-            releaseContextIfNeeded()
+            await drainAndReleaseContextIfNeeded()
             return
         }
 
@@ -117,21 +126,41 @@ public actor FSEventsMonitor: EventSource {
             FSEventStreamInvalidate(stream)
             FSEventStreamRelease(stream)
             streamRef = nil
-            releaseContextIfNeeded()
+            await drainAndReleaseContextIfNeeded()
             return
         }
     }
 
     public func stop() async {
         guard let streamRef else {
-            releaseContextIfNeeded()
+            await drainAndReleaseContextIfNeeded()
             return
         }
 
+        // Stop the native source first, then wait for callbacks already queued on our
+        // serial queue to finish submitting their publications. Closing the tracker
+        // before this barrier can drop a callback that began before stop().
         FSEventStreamStop(streamRef)
+        queue.sync {}
+        publicationTrackerIfPresent()?.stopAccepting()
         FSEventStreamInvalidate(streamRef)
         FSEventStreamRelease(streamRef)
         self.streamRef = nil
+        await drainAndReleaseContextIfNeeded()
+    }
+
+    private func publicationTrackerIfPresent() -> EventPublicationTracker? {
+        guard let callbackContext else { return nil }
+        return Unmanaged<CallbackContext>
+            .fromOpaque(callbackContext)
+            .takeUnretainedValue()
+            .publicationTracker
+    }
+
+    private func drainAndReleaseContextIfNeeded() async {
+        guard let publicationTracker = publicationTrackerIfPresent() else { return }
+        publicationTracker.stopAccepting()
+        await publicationTracker.drain()
         releaseContextIfNeeded()
     }
 

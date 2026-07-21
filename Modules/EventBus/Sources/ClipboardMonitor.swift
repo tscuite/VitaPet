@@ -117,8 +117,10 @@ public actor ClipboardMonitor: EventSource {
     }
 
     public func stop() async {
-        monitorTask?.cancel()
+        let task = monitorTask
         monitorTask = nil
+        task?.cancel()
+        await task?.value
     }
 
     private func currentChangeCount() async -> Int {

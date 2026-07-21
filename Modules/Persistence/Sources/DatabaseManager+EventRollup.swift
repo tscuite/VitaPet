@@ -7,6 +7,12 @@ extension DatabaseManager {
         guard batch.formatVersion == 1, !batch.digest.isEmpty else {
             throw EventRollupError.invalidBatch
         }
+        guard EventRollupDigest.calculate(
+            buckets: batch.buckets,
+            representatives: batch.representatives
+        ) == batch.digest else {
+            throw EventRollupError.digestMismatch
+        }
         let database = try getOrOpenDatabase()
         try Self.eventExecute("BEGIN IMMEDIATE;", database: database)
         do {

@@ -214,12 +214,14 @@ public actor OllamaService: AIEngineProtocol {
     /// For `.openAICompatible` only: sent as `Authorization: Bearer`. Empty = omit header.
     private var openAIApiKey: String
     private var onConversationUpdated: (@Sendable (String, String, String, String?, String?) async -> Void)?
+    private var activeProducerTasks: [UUID: Task<Void, Never>] = [:]
+    private var acceptingRequests = true
     private var currentStatus: AIEngineStatus = .notConfigured
 
     public init(endpoint: URL, model: String, backend: AIBackend = .ollama, openAIApiKey: String = "") {
         self.endpoint = endpoint
-        self.model = model
         self.backend = backend
+        self.model = AIModelSelection.resolvedModel(model, for: backend)
         self.openAIApiKey = openAIApiKey
     }
 
@@ -312,6 +314,7 @@ public actor OllamaService: AIEngineProtocol {
     }
 
     public func send(message: String) async throws -> AsyncThrowingStream<String, Error> {
+        guard acceptingRequests else { throw OllamaServiceError.serviceUnavailable }
         try Task.checkCancellation()
         let requestSessionId = currentSessionId
         let requestHistory = sessionHistories[requestSessionId] ?? []
@@ -323,6 +326,7 @@ public actor OllamaService: AIEngineProtocol {
                 throw OllamaServiceError.serviceUnavailable
             }
         }
+        guard acceptingRequests else { throw OllamaServiceError.serviceUnavailable }
         try Task.checkCancellation()
 
         let userMessage = ChatMessage(role: .user, content: message)
@@ -337,32 +341,33 @@ public actor OllamaService: AIEngineProtocol {
                 userMessage: message
             )
 
-            return AsyncThrowingStream<String, Error> { continuation in
-                let producer = Task {
-                    do {
-                        let stream = try await URLSession.shared.bytes(for: request)
-                        let assistantMessage = try await self.consumeStream(
-                            bytes: stream.0,
-                            response: stream.1,
-                            continuation: continuation,
-                            onToolCall: nil
-                        )
-                        try Task.checkCancellation()
+            let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+            let requestID = UUID()
+            let producer = Task { [self] in
+                defer { activeProducerTasks.removeValue(forKey: requestID) }
+                do {
+                    let responseStream = try await URLSession.shared.bytes(for: request)
+                    let assistantMessage = try await consumeStream(
+                        bytes: responseStream.0,
+                        response: responseStream.1,
+                        continuation: continuation,
+                        onToolCall: nil
+                    )
+                    try Task.checkCancellation()
 
-                        self.recordConversation(
-                            userMessage: userMessage,
-                            assistantMessage: assistantMessage,
-                            sessionId: requestSessionId
-                        )
-                        continuation.finish()
-                    } catch {
-                        continuation.finish(throwing: error)
-                    }
-                }
-                continuation.onTermination = { @Sendable _ in
-                    producer.cancel()
+                    await recordConversation(
+                        userMessage: userMessage,
+                        assistantMessage: assistantMessage,
+                        sessionId: requestSessionId
+                    )
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
                 }
             }
+            activeProducerTasks[requestID] = producer
+            continuation.onTermination = { @Sendable _ in producer.cancel() }
+            return stream
         case .openAICompatible:
             var request = try Self.buildOpenAICompatibleChatRequest(
                 endpoint: endpoint,
@@ -374,32 +379,33 @@ public actor OllamaService: AIEngineProtocol {
             )
             applyOpenAIAuthorizationIfNeeded(to: &request)
 
-            return AsyncThrowingStream<String, Error> { continuation in
-                let producer = Task {
-                    do {
-                        let (data, response) = try await URLSession.shared.data(for: request)
-                        let assistantMessage = try await self.consumeOpenAIResponse(
-                            data: data,
-                            response: response,
-                            continuation: continuation,
-                            onToolCall: nil
-                        )
-                        try Task.checkCancellation()
+            let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+            let requestID = UUID()
+            let producer = Task { [self] in
+                defer { activeProducerTasks.removeValue(forKey: requestID) }
+                do {
+                    let (data, response) = try await URLSession.shared.data(for: request)
+                    let assistantMessage = try await consumeOpenAIResponse(
+                        data: data,
+                        response: response,
+                        continuation: continuation,
+                        onToolCall: nil
+                    )
+                    try Task.checkCancellation()
 
-                        self.recordConversation(
-                            userMessage: userMessage,
-                            assistantMessage: assistantMessage,
-                            sessionId: requestSessionId
-                        )
-                        continuation.finish()
-                    } catch {
-                        continuation.finish(throwing: error)
-                    }
-                }
-                continuation.onTermination = { @Sendable _ in
-                    producer.cancel()
+                    await recordConversation(
+                        userMessage: userMessage,
+                        assistantMessage: assistantMessage,
+                        sessionId: requestSessionId
+                    )
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
                 }
             }
+            activeProducerTasks[requestID] = producer
+            continuation.onTermination = { @Sendable _ in producer.cancel() }
+            return stream
         }
     }
 
@@ -408,6 +414,7 @@ public actor OllamaService: AIEngineProtocol {
         tools: [OllamaTool],
         onToolCall: @escaping @Sendable (PetToolCall) async -> String?
     ) async throws -> AsyncThrowingStream<String, Error> {
+        guard acceptingRequests else { throw OllamaServiceError.serviceUnavailable }
         try Task.checkCancellation()
         let requestSessionId = currentSessionId
         let requestHistory = sessionHistories[requestSessionId] ?? []
@@ -431,39 +438,41 @@ public actor OllamaService: AIEngineProtocol {
         let localToolNames = Set(tools.map { $0.function.name })
         let mcpBindings = try await loadMCPToolBindings()
         let combinedTools = tools + mcpBindings.values.map { $0.descriptor.ollamaTool }
+        guard acceptingRequests else { throw OllamaServiceError.serviceUnavailable }
         try Task.checkCancellation()
 
-        return AsyncThrowingStream<String, Error> { continuation in
-            let producer = Task {
-                do {
-                    let assistantMessage = try await self.runManagedToolLoop(
-                        initialMessages: baseMessages,
-                        tools: combinedTools,
-                        localToolNames: localToolNames,
-                        mcpBindings: mcpBindings,
-                        onToolCall: onToolCall
-                    )
-                    try Task.checkCancellation()
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+        let requestID = UUID()
+        let producer = Task { [self] in
+            defer { activeProducerTasks.removeValue(forKey: requestID) }
+            do {
+                let assistantMessage = try await runManagedToolLoop(
+                    initialMessages: baseMessages,
+                    tools: combinedTools,
+                    localToolNames: localToolNames,
+                    mcpBindings: mcpBindings,
+                    onToolCall: onToolCall
+                )
+                try Task.checkCancellation()
 
-                    if !assistantMessage.isEmpty {
-                        continuation.yield(assistantMessage)
-                    }
-                    try Task.checkCancellation()
-
-                    self.recordConversation(
-                        userMessage: userMessage,
-                        assistantMessage: assistantMessage,
-                        sessionId: requestSessionId
-                    )
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
+                if !assistantMessage.isEmpty {
+                    continuation.yield(assistantMessage)
                 }
-            }
-            continuation.onTermination = { @Sendable _ in
-                producer.cancel()
+                try Task.checkCancellation()
+
+                await recordConversation(
+                    userMessage: userMessage,
+                    assistantMessage: assistantMessage,
+                    sessionId: requestSessionId
+                )
+                continuation.finish()
+            } catch {
+                continuation.finish(throwing: error)
             }
         }
+        activeProducerTasks[requestID] = producer
+        continuation.onTermination = { @Sendable _ in producer.cancel() }
+        return stream
     }
 
     private func runManagedToolLoop(
@@ -692,6 +701,19 @@ public actor OllamaService: AIEngineProtocol {
         onConversationUpdated = handler
     }
 
+    /// Cancels and joins every response producer, including a persistence
+    /// callback it is currently awaiting.
+    public func cancelActiveRequestsAndWait() async {
+        acceptingRequests = false
+        while !activeProducerTasks.isEmpty {
+            let tasks = Array(activeProducerTasks.values)
+            tasks.forEach { $0.cancel() }
+            for task in tasks {
+                await task.value
+            }
+        }
+    }
+
     public func switchSession(_ sessionId: String) {
         currentSessionId = sessionId
     }
@@ -750,11 +772,11 @@ public actor OllamaService: AIEngineProtocol {
         mcpServers: [MCPServerConfiguration] = []
     ) async {
         self.endpoint = endpoint
-        self.model = model
         self.backend = backend
+        self.model = AIModelSelection.resolvedModel(model, for: backend)
         self.openAIApiKey = openAIApiKey
-        await updateMCPServers(mcpServers)
         currentStatus = .notConfigured
+        await updateMCPServers(mcpServers)
     }
 
     public func updateMCPServers(_ configurations: [MCPServerConfiguration]) async {
@@ -801,11 +823,14 @@ public actor OllamaService: AIEngineProtocol {
         let changedNames = Set(nextByName.keys).filter { currentByName[$0] != nextByName[$0] }
         let clientsToClose = (staleNames.union(changedNames)).compactMap { mcpClients.removeValue(forKey: $0) }
 
+        // Publish the new configuration before suspending to close stale clients. This
+        // keeps actor reentrancy last-write-wins: an older call can no longer resume
+        // after a newer call and overwrite its MCP configuration.
+        mcpServerConfigurations = normalized
+
         for client in clientsToClose {
             await client.close()
         }
-
-        mcpServerConfigurations = normalized
     }
 
     private func applyOpenAIAuthorizationIfNeeded(to request: inout URLRequest) {
@@ -1199,7 +1224,7 @@ public actor OllamaService: AIEngineProtocol {
         userMessage: ChatMessage,
         assistantMessage: String,
         sessionId: String
-    ) {
+    ) async {
         var history = sessionHistories[sessionId] ?? []
         history.append(userMessage)
         history.append(ChatMessage(role: .assistant, content: assistantMessage))
@@ -1210,10 +1235,8 @@ public actor OllamaService: AIEngineProtocol {
         sessionHistories[sessionId] = history
 
         if let onConversationUpdated {
-            Task {
-                await onConversationUpdated(userMessage.role.rawValue, userMessage.content, sessionId, nil, nil)
-                await onConversationUpdated("assistant", assistantMessage, sessionId, nil, nil)
-            }
+            await onConversationUpdated(userMessage.role.rawValue, userMessage.content, sessionId, nil, nil)
+            await onConversationUpdated("assistant", assistantMessage, sessionId, nil, nil)
         }
     }
 
@@ -1493,11 +1516,7 @@ public actor OllamaService: AIEngineProtocol {
     }
 
     private func resolvedModelName() -> String {
-        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            return backend.defaultModel
-        }
-        return trimmed
+        AIModelSelection.resolvedModel(model, for: backend)
     }
 
     internal nonisolated static func resolveOllamaTagsURL(from endpoint: URL) -> URL {
@@ -1527,7 +1546,7 @@ public actor OllamaService: AIEngineProtocol {
         if normalizedPath.hasSuffix("/v1/models") || normalizedPath.hasSuffix("/models") {
             return endpoint
         }
-        if normalizedPath.hasSuffix("/v1/chat/completions") {
+        if normalizedPath.hasSuffix("/chat/completions") {
             return endpoint
                 .deletingLastPathComponent()
                 .deletingLastPathComponent()

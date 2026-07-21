@@ -6,6 +6,7 @@ import RenderEngine
 @MainActor
 final class AIProactiveTrigger {
     private var timer: Timer?
+    private var triggerTask: Task<Void, Never>?
     private var isRunning = false
 
     private let ollamaService: OllamaService
@@ -38,6 +39,14 @@ final class AIProactiveTrigger {
         isRunning = false
         timer?.invalidate()
         timer = nil
+        triggerTask?.cancel()
+    }
+
+    func stopAndWait() async {
+        stop()
+        let task = triggerTask
+        await task?.value
+        triggerTask = nil
     }
 
     private func scheduleNextTrigger() {
@@ -51,11 +60,20 @@ final class AIProactiveTrigger {
         let interval = baseInterval + jitter
 
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor in
-                await self.trigger()
-                self.scheduleNextTrigger()
+            Task { @MainActor [weak self] in
+                self?.startTriggerTask()
             }
+        }
+    }
+
+    private func startTriggerTask() {
+        guard isRunning else { return }
+        triggerTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.triggerTask = nil }
+            await self.trigger()
+            guard self.isRunning, !Task.isCancelled else { return }
+            self.scheduleNextTrigger()
         }
     }
 
@@ -88,7 +106,7 @@ final class AIProactiveTrigger {
 
         do {
             let response = try await ollamaService.generateProactive(context: context)
-            guard !response.isEmpty else { return }
+            guard isRunning, !Task.isCancelled, !response.isEmpty else { return }
 
             let (cleanText, actions) = AppDelegate.parseActionTags(from: response)
             for action in actions {

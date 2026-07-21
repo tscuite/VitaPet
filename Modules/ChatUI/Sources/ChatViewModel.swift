@@ -23,9 +23,12 @@ public final class ChatViewModel {
     public var inputText: String = ""
     public private(set) var aiStatus: AIEngineStatus = .notConfigured
     public private(set) var isStreaming = false
+    public private(set) var activeStreamingConversationId: String?
+    public private(set) var activeStreamingMessageId: UUID?
     private var messagesByConversation: [String: [ChatMessage]] = [:]
     @ObservationIgnored private var activeSendTask: Task<Void, Never>?
-    @ObservationIgnored private var activeSendConversationId: String?
+    @ObservationIgnored private var activeSlashCommandTasks: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var acceptingWork = true
     // Per-message capture of the "show thinking" toggle at the moment the
     // message first lands in the view model. The toggle in ChatView only
     // affects messages appended *after* it changes — historical messages keep
@@ -62,7 +65,7 @@ public final class ChatViewModel {
 
     public func sendMessage() {
         let trimmedInput = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedInput.isEmpty, !isStreaming else {
+        guard acceptingWork, !trimmedInput.isEmpty, !isStreaming else {
             return
         }
         ensureSelectedConversation()
@@ -73,9 +76,12 @@ public final class ChatViewModel {
 
         if let command = Self.parseSlashCommand(from: trimmedInput), let handler = onSlashCommand {
             appendToCurrentConversation(ChatMessage(role: .user, content: trimmedInput))
-            Task { @MainActor in
+            let taskID = UUID()
+            let task = Task { @MainActor [weak self] in
+                defer { self?.activeSlashCommandTasks.removeValue(forKey: taskID) }
                 _ = await handler(command.name, command.arguments)
             }
+            activeSlashCommandTasks[taskID] = task
             return
         }
 
@@ -85,11 +91,12 @@ public final class ChatViewModel {
         onUserSent?(conversationId, userMessage)
 
         isStreaming = true
-        activeSendConversationId = conversationId
+        activeStreamingConversationId = conversationId
         activeSendTask = Task { @MainActor in
             defer {
                 isStreaming = false
-                activeSendConversationId = nil
+                activeStreamingConversationId = nil
+                activeStreamingMessageId = nil
                 activeSendTask = nil
             }
 
@@ -111,6 +118,7 @@ public final class ChatViewModel {
 
             let assistantMessage = ChatMessage(role: .assistant, content: "")
             append(assistantMessage, to: conversationId)
+            activeStreamingMessageId = assistantMessage.id
 
             do {
                 try Task.checkCancellation()
@@ -174,6 +182,35 @@ public final class ChatViewModel {
 
     public func cancelStreaming() {
         activeSendTask?.cancel()
+    }
+
+    public func cancelStreamingAndWait() async {
+        let task = activeSendTask
+        task?.cancel()
+        await task?.value
+    }
+
+    /// Closes chat intake, cancels the response stream, and joins slash commands
+    /// that were already accepted so their persistence work cannot outlive shutdown.
+    public func stopAcceptingWorkAndWait() async {
+        acceptingWork = false
+        await cancelStreamingAndWait()
+        while !activeSlashCommandTasks.isEmpty {
+            let tasks = Array(activeSlashCommandTasks.values)
+            for task in tasks {
+                await task.value
+            }
+        }
+    }
+
+    public var isCurrentConversationStreaming: Bool {
+        isStreaming && selectedConversationId == activeStreamingConversationId
+    }
+
+    public func isStreaming(messageId: UUID, in conversationId: String) -> Bool {
+        isStreaming
+            && activeStreamingConversationId == conversationId
+            && activeStreamingMessageId == messageId
     }
 
     public func addExternalMessage(_ content: String) {
@@ -248,7 +285,7 @@ public final class ChatViewModel {
     }
 
     public func deleteConversation(_ id: String) {
-        if activeSendConversationId == id {
+        if activeStreamingConversationId == id {
             cancelStreaming()
         }
         conversations.removeAll { $0.id == id }

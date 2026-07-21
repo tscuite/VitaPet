@@ -77,13 +77,13 @@ public struct ChatView: View {
                 .disabled(sendDisabled)
 
             Button {
-                if viewModel.isStreaming {
+                if viewModel.isCurrentConversationStreaming {
                     viewModel.cancelStreaming()
                 } else {
                     viewModel.sendMessage()
                 }
             } label: {
-                Image(systemName: viewModel.isStreaming ? "stop.fill" : "arrow.up")
+                Image(systemName: viewModel.isCurrentConversationStreaming ? "stop.fill" : "arrow.up")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(sendActionEnabled ? Color.white : Color.secondary)
                     .frame(width: 40, height: 40)
@@ -91,7 +91,7 @@ public struct ChatView: View {
                         Circle()
                             .fill(
                                 sendActionEnabled
-                                    ? AnyShapeStyle(viewModel.isStreaming ? Color.red : Color.accentColor)
+                                    ? AnyShapeStyle(viewModel.isCurrentConversationStreaming ? Color.red : Color.accentColor)
                                     : AnyShapeStyle(Color.black.opacity(0.06))
                             )
                     )
@@ -99,7 +99,7 @@ public struct ChatView: View {
             .buttonStyle(.plain)
             .keyboardShortcut(.return, modifiers: [.command])
             .disabled(!sendActionEnabled)
-            .help(viewModel.isStreaming ? "停止生成 (⌘⏎)" : L10n.chatSend + " (⌘⏎)")
+            .help(viewModel.isCurrentConversationStreaming ? "停止生成 (⌘⏎)" : L10n.chatSend + " (⌘⏎)")
         }
         .padding(10)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.92), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -242,7 +242,7 @@ public struct ChatView: View {
 
     private var currentConversationSubtitle: String {
         let prefix = currentConversationType == .group ? "多宠会话" : "单宠会话"
-        if viewModel.isStreaming {
+        if viewModel.isCurrentConversationStreaming {
             return "\(prefix) · 正在回复…"
         }
         let messageCount = viewModel.messages.count
@@ -273,11 +273,11 @@ public struct ChatView: View {
     }
 
     private var sendActionEnabled: Bool {
-        viewModel.isStreaming || sendButtonEnabled
+        viewModel.isCurrentConversationStreaming || sendButtonEnabled
     }
 
     private var inputPlaceholderText: String {
-        viewModel.isStreaming ? L10n.chatStreamingPlaceholder : L10n.chatInputPlaceholder
+        viewModel.isCurrentConversationStreaming ? L10n.chatStreamingPlaceholder : L10n.chatInputPlaceholder
     }
 
     private var conversationAccentColor: Color {
@@ -321,12 +321,10 @@ private struct ChatMessageSurface: View {
                         emptyState
                             .frame(maxWidth: .infinity, minHeight: 320)
                     } else {
-                        let lastId = viewModel.messages.last?.id
-                        let streamingId = viewModel.isStreaming ? lastId : nil
                         ForEach(viewModel.messages) { message in
                             MessageBubble(
                                 message: message,
-                                isStreaming: streamingId == message.id && message.role == .assistant,
+                                isStreaming: isStreaming(message),
                                 showsThinking: viewModel.showsThinking(for: message.id)
                             )
                             .equatable()
@@ -350,12 +348,12 @@ private struct ChatMessageSurface: View {
                     .stroke(Color.primary.opacity(0.06), lineWidth: 1)
             }
             .onChange(of: viewModel.messages.count) { _, _ in
-                scrollToBottom(proxy: proxy, animated: !viewModel.isStreaming)
+                scrollToBottom(proxy: proxy, animated: !viewModel.isCurrentConversationStreaming)
             }
             .onChange(of: viewModel.messages.last?.content) { _, _ in
                 scrollToBottomForStreamingIfNeeded(proxy: proxy)
             }
-            .onChange(of: viewModel.isStreaming) { _, isStreaming in
+            .onChange(of: viewModel.isCurrentConversationStreaming) { _, isStreaming in
                 if isStreaming {
                     lastStreamingScrollAt = .distantPast
                 } else {
@@ -382,7 +380,7 @@ private struct ChatMessageSurface: View {
     }
 
     private func scrollToBottomForStreamingIfNeeded(proxy: ScrollViewProxy) {
-        guard viewModel.isStreaming else {
+        guard viewModel.isCurrentConversationStreaming else {
             return
         }
         let now = Date()
@@ -391,6 +389,14 @@ private struct ChatMessageSurface: View {
         }
         lastStreamingScrollAt = now
         scrollToBottom(proxy: proxy, animated: false)
+    }
+
+    private func isStreaming(_ message: ChatMessage) -> Bool {
+        guard message.role == .assistant,
+              let conversationId = viewModel.selectedConversationId else {
+            return false
+        }
+        return viewModel.isStreaming(messageId: message.id, in: conversationId)
     }
 
     private var emptyState: some View {

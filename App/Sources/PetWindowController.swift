@@ -32,6 +32,8 @@ public final class PetWindowController: NSWindowController {
     private var currentTrackingTarget: (@MainActor () -> NSPoint?)?
     private var debugMoveTimer: Timer?
     private var movementTimer: Timer?
+    private var pendingMovementStartTask: Task<Void, Never>?
+    private var movementSession = MovementSessionTracker()
     private var wantsPetVisible = false
     private var visibilityGeneration: UInt = 0
     private var otherPetPositionsProvider: (() -> [NSPoint])?
@@ -100,10 +102,9 @@ public final class PetWindowController: NSWindowController {
         // 取消正在执行的行为，桌面感知优先
         if isExecutingBehavior {
             behaviorEngine.cancelCurrentBehavior()
-            movementTimer?.invalidate()
-            movementTimer = nil
             isExecutingBehavior = false
         }
+        cancelMovementSession()
 
         transitionToState(animation, activatesDesktopBehavior: true)
     }
@@ -306,8 +307,7 @@ public final class PetWindowController: NSWindowController {
         behaviorEngine.stopCursorTracking()
         debugMoveTimer?.invalidate()
         debugMoveTimer = nil
-        movementTimer?.invalidate()
-        movementTimer = nil
+        cancelMovementSession()
         isExecutingBehavior = false
         isThinking = false
         bubbleDismissWorkItem?.cancel()
@@ -775,8 +775,7 @@ public final class PetWindowController: NSWindowController {
         guard let definition = behaviorEngine.behaviorDefinition(for: name) else { return }
 
         // Cancel any in-progress behavior first
-        movementTimer?.invalidate()
-        movementTimer = nil
+        cancelMovementSession()
         behaviorEngine.cancelCurrentBehavior()
         behaviorEngine.stopCursorTracking()
         isExecutingBehavior = false
@@ -791,12 +790,33 @@ public final class PetWindowController: NSWindowController {
         }
     }
 
+    @discardableResult
+    private func beginMovementSession() -> UInt {
+        pendingMovementStartTask?.cancel()
+        pendingMovementStartTask = nil
+        movementTimer?.invalidate()
+        movementTimer = nil
+        return movementSession.begin()
+    }
+
+    private func cancelMovementSession() {
+        pendingMovementStartTask?.cancel()
+        pendingMovementStartTask = nil
+        movementTimer?.invalidate()
+        movementTimer = nil
+        movementSession.cancel()
+    }
+
     /// 翻跟头期间用 NSWindow 平移制造「在屏幕上翻滚」的视觉效果。每翻 50px，朝向方向，越过 prep 才开始动。
-    private func startSomersaultRoll(flips: Int) {
+    private func startSomersaultRoll(
+        travelPoints: Double,
+        prepDelay: TimeInterval,
+        rollDuration: TimeInterval
+    ) {
         guard let window else { return }
         let facingSign: CGFloat = petScene.petNode.xScale < 0 ? -1 : 1
-        let pixelsPerFlip: CGFloat = 50
-        let totalDistance = pixelsPerFlip * CGFloat(flips) * facingSign
+        let totalDistance = CGFloat(travelPoints) * facingSign
+        let movementToken = beginMovementSession()
 
         let startOrigin = window.frame.origin
         var targetX = startOrigin.x + totalDistance
@@ -808,18 +828,24 @@ public final class PetWindowController: NSWindowController {
         let actualDistance = targetX - startOrigin.x
         guard abs(actualDistance) > 0.5 else { return }
 
-        movementTimer?.invalidate()
-        movementTimer = nil
-
-        let prepDelay = PetScene.somersaultPrepDuration
-        let rollDuration = Double(flips) * PetScene.somersaultPerFlipDuration
         let fps = TimeInterval(PetScene.activeFramesPerSecond)
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + prepDelay) { [weak self, weak window] in
-            guard let self, let window else { return }
+        pendingMovementStartTask = Task { @MainActor [weak self, weak window] in
+            do {
+                try await Task.sleep(for: .seconds(prepDelay))
+            } catch {
+                return
+            }
+
+            guard let self,
+                  let window,
+                  self.wantsPetVisible,
+                  self.movementSession.isCurrent(movementToken) else {
+                return
+            }
+            self.pendingMovementStartTask = nil
             let startTime = CACurrentMediaTime()
             let targetOrigin = NSPoint(x: targetX, y: startOrigin.y)
-            self.movementTimer?.invalidate()
             let timer = Timer(timeInterval: 1.0 / fps, repeats: true) { [weak self, weak window] timer in
                 let elapsed = CACurrentMediaTime() - startTime
                 let point = MotionFramePlanner.point(
@@ -834,7 +860,9 @@ public final class PetWindowController: NSWindowController {
                 }
 
                 MainActor.assumeIsolated {
-                    guard let self, let window else {
+                    guard let self,
+                          let window,
+                          self.movementSession.isCurrent(movementToken) else {
                         return
                     }
 
@@ -864,8 +892,7 @@ public final class PetWindowController: NSWindowController {
         behaviorEngine.stopCursorTracking()
         debugMoveTimer?.invalidate()
         debugMoveTimer = nil
-        movementTimer?.invalidate()
-        movementTimer = nil
+        cancelMovementSession()
         singleClickWorkItem?.cancel()
         singleClickWorkItem = nil
         bubbleDismissWorkItem?.cancel()
@@ -1002,6 +1029,7 @@ public final class PetWindowController: NSWindowController {
         guard wantsPetVisible else { return }
         behaviorEngine.cancelCurrentBehavior()
         behaviorEngine.stopCursorTracking()
+        cancelMovementSession()
 
         if let state = ActionComboPlanner.playbackState(for: action),
            ActionComboPlanner.plan(for: state) != nil {
@@ -1017,7 +1045,11 @@ public final class PetWindowController: NSWindowController {
             soundManager?.playSound(for: action)
             recordBehaviorChangeIfNeeded(for: .somersault)
             Task { await stateMachine.forceState(.somersault) }
-            startSomersaultRoll(flips: flips)
+            startSomersaultRoll(
+                travelPoints: Double(flips) * 50,
+                prepDelay: PetScene.somersaultPrepDuration,
+                rollDuration: Double(flips) * PetScene.somersaultPerFlipDuration
+            )
             petScene.playSomersault(count: flips)
             return
         }
@@ -1043,16 +1075,26 @@ public final class PetWindowController: NSWindowController {
             return
         }
 
+        cancelMovementSession()
         animationLockUntil = Date().addingTimeInterval(plan.totalDuration + 0.2)
         animationStateSnapshot = state
-        soundManager?.playSound(for: state.rawValue)
+        for soundState in ActionComboPlanner.soundStateCandidates(for: state) {
+            soundManager?.playSound(for: soundState.rawValue)
+        }
         recordBehaviorChangeIfNeeded(for: state)
         if forceState {
             Task { await stateMachine.forceState(state) }
         }
 
-        if state == .somersaultCombo {
-            startSomersaultRoll(flips: flips)
+        if state == .somersaultCombo,
+           let somersaultIndex = plan.segments.firstIndex(where: { $0.state == .somersault }) {
+            let rollSegment = plan.segments[somersaultIndex]
+            let prepDelay = plan.segments[..<somersaultIndex].reduce(0) { $0 + $1.duration }
+            startSomersaultRoll(
+                travelPoints: plan.windowTravelPoints,
+                prepDelay: prepDelay,
+                rollDuration: rollSegment.duration
+            )
         } else if plan.windowTravelPoints > 0 {
             startComboTravel(points: plan.windowTravelPoints, duration: plan.totalDuration)
         }
@@ -1061,6 +1103,7 @@ public final class PetWindowController: NSWindowController {
 
     private func startComboTravel(points: Double, duration: TimeInterval) {
         guard let window else { return }
+        let movementToken = beginMovementSession()
         let facingSign: CGFloat = petScene.petNode.xScale < 0 ? -1 : 1
         let startOrigin = window.frame.origin
         var targetX = startOrigin.x + CGFloat(points) * facingSign
@@ -1072,9 +1115,6 @@ public final class PetWindowController: NSWindowController {
 
         let targetOrigin = NSPoint(x: targetX, y: startOrigin.y)
         guard abs(targetOrigin.x - startOrigin.x) > 0.5 else { return }
-
-        movementTimer?.invalidate()
-        movementTimer = nil
 
         let travelDuration = max(duration * 0.75, 0.2)
         let fps = TimeInterval(PetScene.activeFramesPerSecond)
@@ -1093,7 +1133,9 @@ public final class PetWindowController: NSWindowController {
             }
 
             MainActor.assumeIsolated {
-                guard let self, let window else {
+                guard let self,
+                      let window,
+                      self.movementSession.isCurrent(movementToken) else {
                     return
                 }
 
@@ -1242,6 +1284,7 @@ public final class PetWindowController: NSWindowController {
             return
         }
 
+        cancelMovementSession()
         isExecutingBehavior = true
         let isJump = behaviorEngine.behaviorDefinition(for: behaviorName)?.type == .jump
         let onMove: @Sendable (NSPoint, TimeInterval) -> Void = { [weak self] target, duration in
@@ -1256,7 +1299,7 @@ public final class PetWindowController: NSWindowController {
                 let start = window.frame.origin
                 let fps = TimeInterval(PetScene.activeFramesPerSecond)
                 let startTime = CACurrentMediaTime()
-                self.movementTimer?.invalidate()
+                let movementToken = self.beginMovementSession()
                 let timer = Timer(timeInterval: 1.0 / fps, repeats: true) { [weak self] timer in
                     let elapsed = CACurrentMediaTime() - startTime
                     let point = MotionFramePlanner.point(
@@ -1271,7 +1314,9 @@ public final class PetWindowController: NSWindowController {
                     }
 
                     MainActor.assumeIsolated {
-                        guard let self, let window = self.window else {
+                        guard let self,
+                              let window = self.window,
+                              self.movementSession.isCurrent(movementToken) else {
                             return
                         }
 
@@ -1298,8 +1343,7 @@ public final class PetWindowController: NSWindowController {
                     return
                 }
 
-                self.movementTimer?.invalidate()
-                self.movementTimer = nil
+                self.cancelMovementSession()
                 self.isExecutingBehavior = false
                 self.currentTrackingTarget = nil
                 if isJump {

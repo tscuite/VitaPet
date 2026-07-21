@@ -41,8 +41,10 @@ public actor GitHubMonitor: EventSource {
 
     public func stop() async {
         isRunning = false
-        pollTask?.cancel()
+        let task = pollTask
         pollTask = nil
+        task?.cancel()
+        await task?.value
         eventBus = nil
     }
 

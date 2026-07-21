@@ -106,4 +106,59 @@ final class EventBusTests: XCTestCase {
 
         XCTAssertNotEqual(first, second)
     }
+
+    func testPublish_waitsForMatchingHandlersToFinish() async {
+        let eventBus = EventBus()
+        let blocker = EventHandlerBlocker()
+        _ = await eventBus.subscribe { _ in
+            await blocker.waitUntilReleased()
+        }
+
+        let publishTask = Task {
+            await eventBus.publish(.focusEntered)
+            await blocker.markPublishReturned()
+        }
+
+        await blocker.waitUntilHandlerStarted()
+        let didReturnBeforeRelease = await blocker.didPublishReturn
+        XCTAssertFalse(didReturnBeforeRelease)
+        await blocker.releaseHandler()
+        await publishTask.value
+        let didReturnAfterRelease = await blocker.didPublishReturn
+        XCTAssertTrue(didReturnAfterRelease)
+    }
+}
+
+private actor EventHandlerBlocker {
+    private var handlerStarted = false
+    private var handlerStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var didPublishReturn = false
+
+    func waitUntilReleased() async {
+        handlerStarted = true
+        let startWaiters = handlerStartWaiters
+        handlerStartWaiters.removeAll()
+        startWaiters.forEach { $0.resume() }
+        await withCheckedContinuation { continuation in
+            releaseWaiters.append(continuation)
+        }
+    }
+
+    func waitUntilHandlerStarted() async {
+        if handlerStarted { return }
+        await withCheckedContinuation { continuation in
+            handlerStartWaiters.append(continuation)
+        }
+    }
+
+    func releaseHandler() {
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    func markPublishReturned() {
+        didPublishReturn = true
+    }
 }

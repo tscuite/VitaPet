@@ -22,6 +22,12 @@ APP_BASENAME="${APP_NAME}.app"
 APP_DIR="${OUT_DIR}/${APP_BASENAME}"
 
 BUILD_ARGS=(-c release)
+if [ "${VITAPET_BUILD_DISABLE_SANDBOX:-0}" = "1" ]; then
+  BUILD_ARGS+=(--disable-sandbox)
+fi
+if [ -n "${VITAPET_SWIFT_INCLUDE_PATH:-}" ]; then
+  BUILD_ARGS+=(-Xswiftc -I -Xswiftc "${VITAPET_SWIFT_INCLUDE_PATH}")
+fi
 for arch in "${ARCH_LIST[@]}"; do
   BUILD_ARGS+=(--arch "$arch")
 done
@@ -37,19 +43,22 @@ mkdir -p "${APP_DIR}/Contents/Resources"
 
 cp "${BIN_DIR}/${BIN_NAME}" "${APP_DIR}/Contents/MacOS/${BIN_NAME}"
 
-# SwiftPM's generated Bundle.module accessor looks for resource bundles at
-# Bundle.main.bundleURL — for a .app that's the .app root, not Contents/Resources.
-# Place bundles at both locations: the accessor path (app root) and the standard
-# Contents/Resources for discoverability.
+# Application resource resolvers prefer the standard signed-bundle location and
+# fall back to SwiftPM's Bundle.module location for `swift run` and tests.
 for bundle in "${BIN_DIR}"/*.bundle; do
   [ -e "$bundle" ] || continue
-  cp -R "$bundle" "${APP_DIR}/"
   cp -R "$bundle" "${APP_DIR}/Contents/Resources/"
 done
 
 ICON_SRC="App/Resources/AppIcon.icns"
-echo "==> Generating AppIcon.icns"
-swift scripts/generate_icon.swift "🐱" "${ICON_SRC}"
+if [ "${VITAPET_REGENERATE_ICON:-0}" = "1" ]; then
+  echo "==> Regenerating AppIcon.icns"
+  swift scripts/generate_icon.swift "🐱" "${ICON_SRC}"
+fi
+if [ ! -s "${ICON_SRC}" ]; then
+  echo "Checked-in AppIcon.icns is missing or empty" >&2
+  exit 1
+fi
 cp "${ICON_SRC}" "${APP_DIR}/Contents/Resources/AppIcon.icns"
 
 cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
@@ -93,7 +102,8 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign --force --deep --sign - "${APP_DIR}" >/dev/null 2>&1 || true
+codesign --force --deep --sign - "${APP_DIR}"
+codesign --verify --deep --strict "${APP_DIR}"
 
 echo "==> Built ${APP_DIR}"
 

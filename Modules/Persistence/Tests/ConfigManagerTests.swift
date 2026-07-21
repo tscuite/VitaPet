@@ -381,6 +381,112 @@ final class ConfigManagerTests: XCTestCase {
         XCTAssertEqual(reloaded.config.pets[1], secondPet)
     }
 
+    func testUpdate_whenAtomicWriteFails_keepsPublishedConfigUnchanged() throws {
+        let parentURL = makeStorageURL()
+        defer { try? FileManager.default.removeItem(at: parentURL) }
+        try FileManager.default.createDirectory(at: parentURL, withIntermediateDirectories: true)
+        let blockedStorageURL = parentURL.appendingPathComponent("not-a-directory")
+        try Data("occupied".utf8).write(to: blockedStorageURL)
+        let manager = ConfigManager(storageURL: blockedStorageURL)
+        let originalModel = manager.config.ollamaModel
+
+        XCTAssertThrowsError(
+            try manager.update {
+                $0.ollamaModel = "model-that-must-not-publish"
+            }
+        )
+        XCTAssertEqual(manager.config.ollamaModel, originalModel)
+    }
+
+    func testLegacyConfigWithoutBackend_infersOpenAICompatibleOnce() throws {
+        let legacyConfig: [String: Any] = [
+            "windowPositionX": 210.0,
+            "windowPositionY": 240.0,
+            "petSize": 144.0,
+            "selectedSpritePack": "legacy-pack",
+            "enabledCapabilities": [:],
+            "locale": "en",
+            "ollamaEndpoint": "https://example.test/v1/chat/completions",
+            "ollamaModel": "legacy-explicit-model"
+        ]
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: legacyConfig,
+            format: .xml,
+            options: 0
+        )
+
+        let decoded = try PropertyListDecoder().decode(ConfigManager.AppConfig.self, from: data)
+
+        XCTAssertEqual(decoded.aiBackend, "openai-compatible")
+        XCTAssertEqual(decoded.ollamaModel, "legacy-explicit-model")
+    }
+
+    func testLegacyConfigWithoutBackend_acceptsTrailingSlashOnOpenAIEndpoint() throws {
+        let legacyConfig: [String: Any] = [
+            "windowPositionX": 210.0,
+            "windowPositionY": 240.0,
+            "petSize": 144.0,
+            "selectedSpritePack": "legacy-pack",
+            "enabledCapabilities": [:],
+            "locale": "en",
+            "ollamaEndpoint": "https://example.test/v1/chat/completions/",
+            "ollamaModel": "legacy-explicit-model"
+        ]
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: legacyConfig,
+            format: .xml,
+            options: 0
+        )
+
+        let decoded = try PropertyListDecoder().decode(ConfigManager.AppConfig.self, from: data)
+        XCTAssertEqual(decoded.aiBackend, "openai-compatible")
+    }
+
+    func testLegacyOpenAIConfigWithoutModel_usesBackendDefault() throws {
+        let legacyConfig: [String: Any] = [
+            "windowPositionX": 210.0,
+            "windowPositionY": 240.0,
+            "petSize": 144.0,
+            "selectedSpritePack": "legacy-pack",
+            "enabledCapabilities": [:],
+            "locale": "en",
+            "ollamaEndpoint": "https://example.test/v1/chat/completions/"
+        ]
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: legacyConfig,
+            format: .xml,
+            options: 0
+        )
+
+        let decoded = try PropertyListDecoder().decode(ConfigManager.AppConfig.self, from: data)
+        XCTAssertEqual(decoded.aiBackend, "openai-compatible")
+        XCTAssertEqual(decoded.ollamaModel, "")
+    }
+
+    func testExplicitBackendRemainsAuthoritativeEvenWhenEndpointLooksDifferent() throws {
+        let explicitConfig: [String: Any] = [
+            "windowPositionX": 120.0,
+            "windowPositionY": 120.0,
+            "petSize": 96.0,
+            "selectedSpritePack": "default",
+            "enabledCapabilities": [:],
+            "locale": "en",
+            "ollamaEndpoint": "https://example.test/v1/chat/completions",
+            "aiBackend": "ollama",
+            "ollamaModel": "explicit-model"
+        ]
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: explicitConfig,
+            format: .xml,
+            options: 0
+        )
+
+        let decoded = try PropertyListDecoder().decode(ConfigManager.AppConfig.self, from: data)
+
+        XCTAssertEqual(decoded.aiBackend, "ollama")
+        XCTAssertEqual(decoded.ollamaModel, "explicit-model")
+    }
+
     private func makeStorageURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

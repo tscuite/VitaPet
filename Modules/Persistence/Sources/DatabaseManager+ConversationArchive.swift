@@ -69,6 +69,24 @@ extension DatabaseManager {
         return try Self.archiveReadRecords(statement: statement, database: database)
     }
 
+    public func conversationArchiveCount(sessionId: String? = nil) throws -> Int {
+        let database = try getOrOpenDatabase()
+        let sql = sessionId == nil
+            ? "SELECT COUNT(*) FROM conversation_archives;"
+            : "SELECT COUNT(*) FROM conversation_archives WHERE session_id = ?;"
+        let statement = try Self.archivePrepare(sql, database: database)
+        defer { sqlite3_finalize(statement) }
+        if let sessionId {
+            try Self.archiveBind(text: sessionId, index: 1, statement: statement, database: database)
+        }
+
+        guard sqlite3_step(statement) == SQLITE_ROW,
+              let count = Int(exactly: sqlite3_column_int64(statement, 0)) else {
+            throw ConversationArchiveStoreError.invalidCandidate
+        }
+        return count
+    }
+
     public func decodeConversationArchive(
         archiveID: String
     ) throws -> [ArchivedConversationTurn] {

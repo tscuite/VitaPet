@@ -40,7 +40,7 @@ public final class ChatWindowController: NSWindowController {
     private var onTestConnection: @MainActor () -> Void = {}
     private var onTestAIMemoryConnection: @MainActor () async -> String? = { nil }
     private var onTestAIMemoryWrite: @MainActor () async -> String? = { nil }
-    private var onSaveAIConfig: @MainActor (String, String, String, AIEngine.AIBackend, String, String) -> Void = { _, _, _, _, _, _ in }
+    private var onSaveAIConfig: @MainActor (String, String, String, AIEngine.AIBackend, String, String) -> String? = { _, _, _, _, _, _ in nil }
     private var onSaveAIMemoryConfig: @MainActor (Bool, String, String, String, String, String, String, Int) -> Void = { _, _, _, _, _, _, _, _ in }
     private var githubToken: @MainActor () -> String = { "" }
     private var webhookEnabled: @MainActor () -> Bool = { false }
@@ -363,7 +363,7 @@ public final class ChatWindowController: NSWindowController {
         onTestConnection: @escaping @MainActor () -> Void = {},
         onTestAIMemoryConnection: @escaping @MainActor () async -> String? = { nil },
         onTestAIMemoryWrite: @escaping @MainActor () async -> String? = { nil },
-        onSaveAIConfig: @escaping @MainActor (String, String, String, AIEngine.AIBackend, String, String) -> Void = { _, _, _, _, _, _ in },
+        onSaveAIConfig: @escaping @MainActor (String, String, String, AIEngine.AIBackend, String, String) -> String? = { _, _, _, _, _, _ in nil },
         onSaveAIMemoryConfig: @escaping @MainActor (Bool, String, String, String, String, String, String, Int) -> Void = { _, _, _, _, _, _, _, _ in }
     ) {
         self.aiEndpoint = aiEndpoint

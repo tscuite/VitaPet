@@ -54,7 +54,9 @@ public actor HourBoundaryTimerSource: EventSource {
     }
 
     public func stop() async {
-        loopTask?.cancel()
+        let task = loopTask
         loopTask = nil
+        task?.cancel()
+        await task?.value
     }
 }

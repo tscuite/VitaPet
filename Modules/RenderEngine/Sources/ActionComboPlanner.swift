@@ -31,6 +31,8 @@ public struct ActionComboPlan: Equatable, Sendable {
 }
 
 public enum ActionComboPlanner {
+    public static let somersaultPerFlipDuration: TimeInterval = 0.55
+
     public static let comboStates: [AnimationState] = [
         .danceCombo,
         .somersaultCombo,
@@ -91,6 +93,29 @@ public enum ActionComboPlanner {
         return AnimationState(rawValue: value)
     }
 
+    /// Sound lookup order for combo states. Custom packs may provide the exact
+    /// combo key; bundled and older packs can fall back to their legacy keys.
+    public static func soundStateCandidates(for state: AnimationState) -> [AnimationState] {
+        switch state {
+        case .danceCombo:
+            return [.danceCombo, .dance]
+        case .somersaultCombo:
+            return [.somersaultCombo, .somersault, .roll]
+        case .boxingCombo:
+            return [.boxingCombo, .punch, .angry]
+        case .parkourCombo:
+            return [.parkourCombo, .run]
+        case .partyCombo:
+            return [.partyCombo, .celebrate, .dance]
+        case .trainingCombo:
+            return [.trainingCombo, .alert, .angry]
+        case .joySpinCombo:
+            return [.joySpinCombo, .celebrate]
+        default:
+            return [state]
+        }
+    }
+
     public static func plan(for state: AnimationState, count: Int = 1) -> ActionComboPlan? {
         switch state {
         case .danceCombo:
@@ -122,7 +147,10 @@ public enum ActionComboPlanner {
                 state: state,
                 segments: [
                     .init(state: .crouch, duration: 0.34),
-                    .init(state: .somersault, duration: 0.50 + Double(flips) * 0.55),
+                    .init(
+                        state: .somersault,
+                        duration: Double(flips) * somersaultPerFlipDuration
+                    ),
                     .init(state: .pawReach, duration: 0.36),
                     .init(state: .punch, duration: 0.38),
                     .init(state: .sparkle, duration: 0.54)

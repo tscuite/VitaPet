@@ -231,7 +231,7 @@ public struct FileEventDelivery: Sendable, Equatable {
     }
 }
 
-public struct EventRollupBatch: Sendable, Equatable {
+public struct EventRollupBatch: Sendable, Equatable, Codable {
     public let id: UUID
     public let formatVersion: Int
     public let digest: String
@@ -270,5 +270,81 @@ public struct StorageMaintenanceReport: Sendable, Equatable {
         self.deletedEventCount = deletedEventCount
         self.deletedRollupCount = deletedRollupCount
         self.reclaimedBytes = reclaimedBytes
+    }
+}
+
+public struct StorageMetricsSnapshot: Sendable, Equatable {
+    public let liveConversationTurnCount: Int64
+    public let conversationArchiveCount: Int64
+    public let archivedConversationTurnCount: Int64
+    public let archiveCompressedBytes: Int64
+    public let archiveUncompressedBytes: Int64
+    public let rawEventCount: Int64
+    public let rolledUpEventCount: Int64
+    public let eventRollupBatchCount: Int64
+    public let databaseBytes: Int64
+    public let walBytes: Int64
+
+    public init(
+        liveConversationTurnCount: Int64,
+        conversationArchiveCount: Int64,
+        archivedConversationTurnCount: Int64,
+        archiveCompressedBytes: Int64,
+        archiveUncompressedBytes: Int64,
+        rawEventCount: Int64,
+        rolledUpEventCount: Int64,
+        eventRollupBatchCount: Int64,
+        databaseBytes: Int64,
+        walBytes: Int64
+    ) {
+        self.liveConversationTurnCount = liveConversationTurnCount
+        self.conversationArchiveCount = conversationArchiveCount
+        self.archivedConversationTurnCount = archivedConversationTurnCount
+        self.archiveCompressedBytes = archiveCompressedBytes
+        self.archiveUncompressedBytes = archiveUncompressedBytes
+        self.rawEventCount = rawEventCount
+        self.rolledUpEventCount = rolledUpEventCount
+        self.eventRollupBatchCount = eventRollupBatchCount
+        self.databaseBytes = databaseBytes
+        self.walBytes = walBytes
+    }
+}
+
+public struct DatabaseCloseFailure: Sendable, Equatable {
+    public let resultCode: Int32
+    public let message: String
+
+    public init(resultCode: Int32, message: String) {
+        self.resultCode = resultCode
+        self.message = message
+    }
+}
+
+public enum DatabaseCloseResult: Sendable, Equatable {
+    case closed
+    case alreadyClosed(previousFailure: DatabaseCloseFailure?)
+    case failed(DatabaseCloseFailure)
+
+    public var succeeded: Bool {
+        switch self {
+        case .closed, .alreadyClosed:
+            true
+        case .failed:
+            false
+        }
+    }
+}
+
+public enum DatabaseLifecycleError: LocalizedError, Sendable, Equatable {
+    case closed
+    case closeFailed(DatabaseCloseFailure)
+
+    public var errorDescription: String? {
+        switch self {
+        case .closed:
+            "The database manager is closed and cannot be reopened."
+        case let .closeFailed(failure):
+            "The database manager is terminal after a failed close (SQLite \(failure.resultCode)): \(failure.message)"
+        }
     }
 }

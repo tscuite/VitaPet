@@ -54,6 +54,26 @@ final class ActionComboPlannerTests: XCTestCase {
         XCTAssertEqual(fourFlips.windowTravelPoints, 200)
     }
 
+    func testSomersaultComboDurationRepresentsExactlyRequestedMinimumAndMaximumFlips() throws {
+        for requestedFlips in [1, 8] {
+            let plan = try XCTUnwrap(
+                ActionComboPlanner.plan(for: .somersaultCombo, count: requestedFlips)
+            )
+            let somersaultIndex = try XCTUnwrap(
+                plan.segments.firstIndex { $0.state == .somersault }
+            )
+            let somersaultSegment = plan.segments[somersaultIndex]
+            let expectedDuration = Double(requestedFlips) * 0.55
+            let inferredFlipCount = Int(round(somersaultSegment.duration / 0.55))
+            let movementDelay = plan.segments[..<somersaultIndex].reduce(0) { $0 + $1.duration }
+
+            XCTAssertEqual(somersaultSegment.duration, expectedDuration, accuracy: 0.0001)
+            XCTAssertEqual(inferredFlipCount, requestedFlips)
+            XCTAssertEqual(movementDelay, 0.34, accuracy: 0.0001)
+            XCTAssertEqual(plan.windowTravelPoints, Double(requestedFlips) * 50)
+        }
+    }
+
     func testComboAliasesResolveToComboStates() {
         XCTAssertEqual(ActionComboPlanner.comboState(for: "dance"), .danceCombo)
         XCTAssertEqual(ActionComboPlanner.comboState(for: "跳舞"), .danceCombo)
@@ -71,6 +91,29 @@ final class ActionComboPlannerTests: XCTestCase {
         XCTAssertEqual(ActionComboPlanner.playbackState(for: "punch"), .boxingCombo)
         XCTAssertEqual(ActionComboPlanner.playbackState(for: "danceCombo"), .danceCombo)
         XCTAssertEqual(ActionComboPlanner.playbackState(for: "walk"), .walk)
+    }
+
+    func testComboSoundCandidatesPreferExactKeyThenLegacyFallbacks() {
+        XCTAssertEqual(
+            ActionComboPlanner.soundStateCandidates(for: .danceCombo),
+            [.danceCombo, .dance]
+        )
+        XCTAssertEqual(
+            ActionComboPlanner.soundStateCandidates(for: .joySpinCombo),
+            [.joySpinCombo, .celebrate]
+        )
+        XCTAssertEqual(
+            ActionComboPlanner.soundStateCandidates(for: .somersaultCombo),
+            [.somersaultCombo, .somersault, .roll]
+        )
+        XCTAssertEqual(
+            ActionComboPlanner.soundStateCandidates(for: .boxingCombo),
+            [.boxingCombo, .punch, .angry]
+        )
+        XCTAssertEqual(
+            ActionComboPlanner.soundStateCandidates(for: .walk),
+            [.walk]
+        )
     }
 
     func testManifestFramesUseExpandedActionFrames() throws {

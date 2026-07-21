@@ -54,6 +54,14 @@ public enum AIBackend: String, Codable, Sendable, CaseIterable {
     }
 }
 
+/// Resolves the configured model without silently replacing an explicit choice.
+public enum AIModelSelection {
+    public static func resolvedModel(_ rawValue: String, for backend: AIBackend) -> String {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? backend.defaultModel : trimmed
+    }
+}
+
 public enum JSONValue: Codable, Sendable, Equatable {
     case string(String)
     case number(Double)

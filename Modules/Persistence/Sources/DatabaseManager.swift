@@ -3,8 +3,16 @@ import ChatUI
 import SQLite3
 
 public actor DatabaseManager {
+    private enum LifecycleState {
+        case active
+        case closeFailed(DatabaseCloseFailure)
+        case closed(previousFailure: DatabaseCloseFailure?)
+    }
+
     private let databaseURL: URL
+    private let sqliteClose: @Sendable (OpaquePointer?) -> Int32
     private var db: OpaquePointer?
+    private var lifecycleState = LifecycleState.active
 
     public init() {
         let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -14,15 +22,53 @@ public actor DatabaseManager {
 
     public init(databaseURL: URL) {
         self.databaseURL = databaseURL
+        self.sqliteClose = { database in
+            sqlite3_close(database)
+        }
+    }
+
+    init(
+        databaseURL: URL,
+        sqliteClose: @escaping @Sendable (OpaquePointer?) -> Int32
+    ) {
+        self.databaseURL = databaseURL
+        self.sqliteClose = sqliteClose
     }
 
     func maintenanceDatabaseURL() -> URL { databaseURL }
 
-    public func close() {
-        if let db {
-            sqlite3_close(db)
-            self.db = nil
+    @discardableResult
+    public func close() -> DatabaseCloseResult {
+        let previousFailure: DatabaseCloseFailure?
+        switch lifecycleState {
+        case .active:
+            previousFailure = nil
+        case let .closeFailed(failure):
+            previousFailure = failure
+        case let .closed(failure):
+            return .alreadyClosed(previousFailure: failure)
         }
+
+        guard let db else {
+            lifecycleState = .closed(previousFailure: previousFailure)
+            return .closed
+        }
+
+        let resultCode = sqliteClose(db)
+        guard resultCode == SQLITE_OK else {
+            let databaseMessage = sqlite3_errmsg(db).map(String.init(cString:))
+            let resultMessage = sqlite3_errstr(resultCode).map(String.init(cString:))
+            let failure = DatabaseCloseFailure(
+                resultCode: resultCode,
+                message: databaseMessage ?? resultMessage ?? "Unknown SQLite close error."
+            )
+            lifecycleState = .closeFailed(failure)
+            return .failed(failure)
+        }
+
+        self.db = nil
+        lifecycleState = .closed(previousFailure: previousFailure)
+        return .closed
     }
 
     @discardableResult
@@ -30,7 +76,51 @@ public actor DatabaseManager {
         try initializeStorage()
     }
 
+    public func fetchStorageMetrics() throws -> StorageMetricsSnapshot {
+        let database = try getOrOpenDatabase()
+        let statement = try Self.prepare(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM conversation_turns),
+                (SELECT COUNT(*) FROM conversation_archives),
+                (SELECT COALESCE(SUM(turn_count), 0) FROM conversation_archives),
+                (SELECT COALESCE(SUM(length(compressed_payload)), 0) FROM conversation_archives),
+                (SELECT COALESCE(SUM(uncompressed_bytes), 0) FROM conversation_archives),
+                (SELECT COUNT(*) FROM events),
+                (SELECT COALESCE(SUM(event_count), 0) FROM event_hourly_rollups),
+                (SELECT COUNT(*) FROM event_rollup_batches);
+            """,
+            in: database
+        )
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            throw Self.sqliteError(in: database)
+        }
+
+        return StorageMetricsSnapshot(
+            liveConversationTurnCount: sqlite3_column_int64(statement, 0),
+            conversationArchiveCount: sqlite3_column_int64(statement, 1),
+            archivedConversationTurnCount: sqlite3_column_int64(statement, 2),
+            archiveCompressedBytes: sqlite3_column_int64(statement, 3),
+            archiveUncompressedBytes: sqlite3_column_int64(statement, 4),
+            rawEventCount: sqlite3_column_int64(statement, 5),
+            rolledUpEventCount: sqlite3_column_int64(statement, 6),
+            eventRollupBatchCount: sqlite3_column_int64(statement, 7),
+            databaseBytes: storageFileBytes(at: databaseURL),
+            walBytes: storageFileBytes(at: URL(fileURLWithPath: databaseURL.path + "-wal"))
+        )
+    }
+
     func getOrOpenDatabase() throws -> OpaquePointer? {
+        switch lifecycleState {
+        case .active:
+            break
+        case .closed:
+            throw DatabaseLifecycleError.closed
+        case let .closeFailed(failure):
+            throw DatabaseLifecycleError.closeFailed(failure)
+        }
+
         if let db {
             return db
         }
@@ -192,11 +282,50 @@ public actor DatabaseManager {
 
         let statement = try Self.prepare(
             """
-            SELECT source, COUNT(*) as cnt
-            FROM events
-            WHERE timestamp >= datetime('now', ?)
+            WITH parameters AS (
+                SELECT
+                    unixepoch('now', ?1) AS exact_cutoff,
+                    CAST(unixepoch('now', ?1) / 3600 AS INTEGER) * 3600 AS hourly_cutoff,
+                    COALESCE(
+                        (
+                            SELECT CAST(value AS INTEGER)
+                            FROM storage_metadata
+                            WHERE key = 'file_event_migration_high_watermark'
+                        ),
+                        -1
+                    ) AS watermark
+            ),
+            logical_counts(source, event_count) AS (
+                SELECT events.source, COUNT(*)
+                FROM events
+                CROSS JOIN parameters
+                WHERE events.source IS NOT 'fileChanged'
+                  AND unixepoch(events.timestamp) >= parameters.exact_cutoff
+                GROUP BY events.source
+
+                UNION ALL
+
+                SELECT event_hourly_rollups.source, event_hourly_rollups.event_count
+                FROM event_hourly_rollups
+                CROSS JOIN parameters
+                WHERE event_hourly_rollups.source = 'fileChanged'
+                  AND event_hourly_rollups.bucket_start >= parameters.hourly_cutoff
+
+                UNION ALL
+
+                SELECT 'fileChanged', COUNT(*)
+                FROM events
+                CROSS JOIN parameters
+                WHERE events.source = 'fileChanged'
+                  AND events.rollup_accounted = 0
+                  AND events.id <= parameters.watermark
+                  AND unixepoch(events.timestamp) >= parameters.exact_cutoff
+            )
+            SELECT source, SUM(event_count) AS cnt
+            FROM logical_counts
             GROUP BY source
-            ORDER BY cnt DESC;
+            HAVING SUM(event_count) > 0
+            ORDER BY cnt DESC, source ASC;
             """,
             in: database
         )
@@ -278,10 +407,53 @@ public actor DatabaseManager {
 
         let statement = try Self.prepare(
             """
-            SELECT strftime('%Y-%m-%d', timestamp) as day, COUNT(*) as cnt
-            FROM events
-            WHERE timestamp >= datetime('now', ?)
+            WITH parameters AS (
+                SELECT
+                    unixepoch('now', ?1) AS exact_cutoff,
+                    CAST(unixepoch('now', ?1) / 3600 AS INTEGER) * 3600 AS hourly_cutoff,
+                    COALESCE(
+                        (
+                            SELECT CAST(value AS INTEGER)
+                            FROM storage_metadata
+                            WHERE key = 'file_event_migration_high_watermark'
+                        ),
+                        -1
+                    ) AS watermark
+            ),
+            logical_counts(day, event_count) AS (
+                SELECT strftime('%Y-%m-%d', events.timestamp), COUNT(*)
+                FROM events
+                CROSS JOIN parameters
+                WHERE events.source IS NOT 'fileChanged'
+                  AND unixepoch(events.timestamp) >= parameters.exact_cutoff
+                GROUP BY strftime('%Y-%m-%d', events.timestamp)
+
+                UNION ALL
+
+                SELECT
+                    strftime('%Y-%m-%d', event_hourly_rollups.bucket_start, 'unixepoch'),
+                    event_hourly_rollups.event_count
+                FROM event_hourly_rollups
+                CROSS JOIN parameters
+                WHERE event_hourly_rollups.source = 'fileChanged'
+                  AND event_hourly_rollups.bucket_start >= parameters.hourly_cutoff
+
+                UNION ALL
+
+                SELECT strftime('%Y-%m-%d', events.timestamp), COUNT(*)
+                FROM events
+                CROSS JOIN parameters
+                WHERE events.source = 'fileChanged'
+                  AND events.rollup_accounted = 0
+                  AND events.id <= parameters.watermark
+                  AND unixepoch(events.timestamp) >= parameters.exact_cutoff
+                GROUP BY strftime('%Y-%m-%d', events.timestamp)
+            )
+            SELECT day, SUM(event_count) AS cnt
+            FROM logical_counts
+            WHERE day IS NOT NULL
             GROUP BY day
+            HAVING SUM(event_count) > 0
             ORDER BY day ASC;
             """,
             in: database
@@ -987,6 +1159,13 @@ extension DatabaseManager {
 
     private var applicationSupportDirectoryURL: URL {
         databaseURL.deletingLastPathComponent()
+    }
+
+    private func storageFileBytes(at url: URL) -> Int64 {
+        guard let size = try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber else {
+            return 0
+        }
+        return max(0, size.int64Value)
     }
 
     private func ensureApplicationSupportDirectoryExists() throws {

@@ -49,4 +49,18 @@ final class MotionFramePlannerTests: XCTestCase {
         XCTAssertEqual(point.x, 60, accuracy: 0.0001)
         XCTAssertEqual(point.y, 120, accuracy: 0.0001)
     }
+
+    func testMovementSessionRejectsSupersededAndCancelledTokens() {
+        var session = MovementSessionTracker()
+
+        let supersededToken = session.begin()
+        let currentToken = session.begin()
+
+        XCTAssertFalse(session.isCurrent(supersededToken))
+        XCTAssertTrue(session.isCurrent(currentToken))
+
+        session.cancel()
+
+        XCTAssertFalse(session.isCurrent(currentToken))
+    }
 }

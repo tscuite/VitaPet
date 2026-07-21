@@ -262,7 +262,23 @@ final class DatabaseManagerTests: XCTestCase {
         XCTAssertEqual(result.archivedTurnCount, 1)
         XCTAssertEqual(turns.count, 2)
         XCTAssertEqual(turns.map(\.content), ["two", "three"])
-        XCTAssertEqual(try await manager.listConversationArchives().count, 1)
+        let archiveCount = try await manager.listConversationArchives().count
+        XCTAssertEqual(archiveCount, 1)
+    }
+
+    func testConversationArchiveCount_doesNotRequireLoadingArchivePayloads() async throws {
+        try await manager.initialize()
+        try await manager.insertConversationTurn(role: "user", content: "one", sessionId: "default")
+        try await manager.insertConversationTurn(role: "assistant", content: "two", sessionId: "default")
+        try await manager.insertConversationTurn(role: "user", content: "three", sessionId: "default")
+        _ = try await manager.archiveEligibleConversationTurns(hotLimit: 1, chunkSize: 2)
+
+        let totalCount = try await manager.conversationArchiveCount()
+        let defaultCount = try await manager.conversationArchiveCount(sessionId: "default")
+        let missingCount = try await manager.conversationArchiveCount(sessionId: "missing")
+        XCTAssertEqual(totalCount, 1)
+        XCTAssertEqual(defaultCount, 1)
+        XCTAssertEqual(missingCount, 0)
     }
 
     func testClearConversation_removesAllTurns() async throws {

@@ -175,6 +175,16 @@ public enum L10n {
 }
 
 private final class Storage: @unchecked Sendable {
+    private static let resourceBundle: Bundle = {
+        if let url = Bundle.main.url(
+            forResource: "VitaPet_Localization",
+            withExtension: "bundle"
+        ), let packagedBundle = Bundle(url: url) {
+            return packagedBundle
+        }
+        return Bundle.module
+    }()
+
     private let lock = NSLock()
     private var currentLocale = "zh-Hans"
     private var cachedTables: [String: [String: Any]] = [:]
@@ -209,7 +219,7 @@ private final class Storage: @unchecked Sendable {
     }
 
     private func loadTable(for locale: String) -> [String: Any]? {
-        guard let url = Bundle.module.url(forResource: locale, withExtension: "json"),
+        guard let url = Self.resourceBundle.url(forResource: locale, withExtension: "json"),
               let data = try? Data(contentsOf: url),
               let object = try? JSONSerialization.jsonObject(with: data),
               let dictionary = object as? [String: Any] else {

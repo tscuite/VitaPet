@@ -15,6 +15,15 @@ public enum SpritePackBuilderError: Error, LocalizedError, Sendable, Equatable {
 }
 
 public struct SpritePackBuilder: Sendable {
+    private static let detectionStates = AnimationState.allCases.sorted { lhs, rhs in
+        let lhsName = normalized(lhs.rawValue)
+        let rhsName = normalized(rhs.rawValue)
+        if lhsName.count != rhsName.count {
+            return lhsName.count > rhsName.count
+        }
+        return lhs.rawValue < rhs.rawValue
+    }
+
     public static func build(
         named name: String,
         frames: [String: [URL]],
@@ -107,7 +116,7 @@ public struct SpritePackBuilder: Sendable {
     private static func detectedState(for fileName: String) -> AnimationState {
         let normalizedFileName = normalized(fileName)
 
-        for state in AnimationState.allCases {
+        for state in detectionStates {
             if normalizedFileName.contains(normalized(state.rawValue)) {
                 return state
             }

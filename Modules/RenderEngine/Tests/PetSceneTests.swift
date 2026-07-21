@@ -28,6 +28,27 @@ final class PetSceneTests: XCTestCase {
         XCTAssertEqual(scene.petNode.zRotation, 0, accuracy: 0.0001)
     }
 
+    func testResetRestoresExplicitLeftFacingAfterAnEffectLosesScaleSign() {
+        let scene = PetScene(size: CGSize(width: 64, height: 64), manifest: testManifest())
+
+        scene.setFacing(.left)
+        scene.petNode.xScale = 0.96
+        scene.playAnimation(for: .idle)
+
+        XCTAssertEqual(scene.petNode.xScale, -1, accuracy: 0.0001)
+        XCTAssertEqual(scene.petNode.yScale, 1, accuracy: 0.0001)
+    }
+
+    func testScaleBaselineKeepsLeftFacingSignAcrossPulseAndRestoreTargets() {
+        let baseline = SpriteScaleBaseline(xScale: -1, yScale: 1)
+
+        XCTAssertEqual(baseline.x(multiplier: 1.10), -1.10, accuracy: 0.0001)
+        XCTAssertEqual(baseline.x(multiplier: 0.96), -0.96, accuracy: 0.0001)
+        XCTAssertEqual(baseline.x(multiplier: 1), -1, accuracy: 0.0001)
+        XCTAssertEqual(baseline.y(multiplier: 1.10), 1.10, accuracy: 0.0001)
+        XCTAssertEqual(baseline.y(multiplier: 1), 1, accuracy: 0.0001)
+    }
+
     private func testManifest() -> SpriteManifest {
         SpriteManifest(
             name: "Test",

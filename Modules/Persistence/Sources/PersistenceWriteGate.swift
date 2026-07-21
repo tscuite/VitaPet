@@ -5,6 +5,7 @@ public final class PersistenceWriteGate: @unchecked Sendable {
     private var nextSequence: UInt64 = 0
     private var unfinished: Set<UInt64> = []
     private var sealed = false
+    private var waiters: [(watermark: UInt64, continuation: CheckedContinuation<Void, Never>)] = []
 
     public init() {}
 
@@ -27,13 +28,45 @@ public final class PersistenceWriteGate: @unchecked Sendable {
         lock.lock(); sealed = true; let watermark = nextSequence; lock.unlock(); return watermark
     }
 
+    @discardableResult
+    public func sealAndWait() async -> UInt64 {
+        let watermark = seal()
+        await wait(through: watermark)
+        return watermark
+    }
+
+    public func wait(through watermark: UInt64) async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            let isComplete = !unfinished.contains { $0 <= watermark }
+            if !isComplete {
+                waiters.append((watermark, continuation))
+            }
+            lock.unlock()
+
+            if isComplete {
+                continuation.resume()
+            }
+        }
+    }
+
     public func pendingCount() -> Int { lock.lock(); defer { lock.unlock() }; return unfinished.count }
 
     private func finish(_ sequence: UInt64) {
         lock.lock()
         unfinished.remove(sequence)
+        var completedWaiters: [CheckedContinuation<Void, Never>] = []
+        waiters.removeAll { waiter in
+            let isComplete = !unfinished.contains { $0 <= waiter.watermark }
+            if isComplete {
+                completedWaiters.append(waiter.continuation)
+            }
+            return isComplete
+        }
         lock.unlock()
+
+        completedWaiters.forEach { $0.resume() }
     }
 }
 
-public enum PersistenceWriteGateError: Error, Sendable { case closed }
+public enum PersistenceWriteGateError: Error, Sendable, Equatable { case closed }

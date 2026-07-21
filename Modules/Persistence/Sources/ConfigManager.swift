@@ -179,8 +179,10 @@ public final class ConfigManager {
             disabledPlugins = try container.decodeIfPresent([String].self, forKey: .disabledPlugins) ?? []
             locale = try container.decodeIfPresent(String.self, forKey: .locale) ?? ConfigManager.defaultLocaleIdentifier()
             ollamaEndpoint = try container.decodeIfPresent(String.self, forKey: .ollamaEndpoint) ?? "http://localhost:11434"
-            aiBackend = try container.decodeIfPresent(String.self, forKey: .aiBackend) ?? "ollama"
-            ollamaModel = try container.decodeIfPresent(String.self, forKey: .ollamaModel) ?? "llama3.2"
+            aiBackend = try container.decodeIfPresent(String.self, forKey: .aiBackend)
+                ?? Self.inferredLegacyAIBackend(from: ollamaEndpoint)
+            ollamaModel = try container.decodeIfPresent(String.self, forKey: .ollamaModel)
+                ?? Self.defaultAIModel(forBackend: aiBackend)
             openAIApiKey = try container.decodeIfPresent(String.self, forKey: .openAIApiKey) ?? ""
             mcpServersJSON = try container.decodeIfPresent(String.self, forKey: .mcpServersJSON) ?? ""
             aiSystemPrompt = try container.decodeIfPresent(String.self, forKey: .aiSystemPrompt) ?? ""
@@ -294,6 +296,30 @@ public final class ConfigManager {
                 return "daily"
             }
         }
+
+        private static func inferredLegacyAIBackend(from endpoint: String) -> String {
+            guard let url = URL(string: endpoint.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                return "ollama"
+            }
+
+            let path = url.path.lowercased().trimmingCharacters(
+                in: CharacterSet(charactersIn: "/")
+            )
+            if path == "chat/completions"
+                || path.hasSuffix("/chat/completions")
+                || path == "models"
+                || path.hasSuffix("/models") {
+                return "openai-compatible"
+            }
+            return "ollama"
+        }
+
+        private static func defaultAIModel(forBackend backend: String) -> String {
+            // Leave a missing OpenAI model blank so the shared AI-layer policy
+            // supplies that backend's current default. A non-empty placeholder
+            // would be treated as an explicit user selection and preserved.
+            backend == "openai-compatible" ? "" : "llama3.2"
+        }
     }
 
     public private(set) var config: AppConfig
@@ -321,19 +347,16 @@ public final class ConfigManager {
     }
 
     public func save() throws {
-        try ensureApplicationSupportDirectoryExists()
-
-        let encoder = PropertyListEncoder()
-        encoder.outputFormat = .xml
-        let data = try encoder.encode(config)
-        try data.write(to: configFileURL, options: .atomic)
+        try persist(config)
     }
 
     public func update(_ transform: (inout AppConfig) -> Void) throws {
         let originalConfig = config
-        transform(&config)
-        config.reconcileLegacyFields(afterUpdatingFrom: originalConfig)
-        try save()
+        var candidate = originalConfig
+        transform(&candidate)
+        candidate.reconcileLegacyFields(afterUpdatingFrom: originalConfig)
+        try persist(candidate)
+        config = candidate
     }
 
     public static func load() -> AppConfig {
@@ -361,6 +384,15 @@ extension ConfigManager {
 
     private func ensureApplicationSupportDirectoryExists() throws {
         try Self.ensureApplicationSupportDirectoryExists(at: applicationSupportDirectoryURL)
+    }
+
+    private func persist(_ candidate: AppConfig) throws {
+        try ensureApplicationSupportDirectoryExists()
+
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .xml
+        let data = try encoder.encode(candidate)
+        try data.write(to: configFileURL, options: .atomic)
     }
 
     nonisolated private static func ensureApplicationSupportDirectoryExists(at storageURL: URL) throws {

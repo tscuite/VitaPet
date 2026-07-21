@@ -8,6 +8,7 @@ public final class WorkspaceMonitor: EventSource, @unchecked Sendable {
     private let notificationCenter: NotificationCenter
     private var activateObserver: NSObjectProtocol?
     private var deactivateObserver: NSObjectProtocol?
+    private var publicationTracker: EventPublicationTracker?
 
     public init(notificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter) {
         self.notificationCenter = notificationCenter
@@ -18,6 +19,8 @@ public final class WorkspaceMonitor: EventSource, @unchecked Sendable {
             return
         }
 
+        let publicationTracker = EventPublicationTracker()
+        self.publicationTracker = publicationTracker
         activateObserver = notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil,
@@ -31,9 +34,7 @@ public final class WorkspaceMonitor: EventSource, @unchecked Sendable {
                 return
             }
 
-            Task {
-                await eventBus.publish(.appActivated(bundleId: bundleId, appName: appName))
-            }
+            publicationTracker.publish(.appActivated(bundleId: bundleId, appName: appName), to: eventBus)
         }
 
         deactivateObserver = notificationCenter.addObserver(
@@ -49,13 +50,12 @@ public final class WorkspaceMonitor: EventSource, @unchecked Sendable {
                 return
             }
 
-            Task {
-                await eventBus.publish(.appDeactivated(bundleId: bundleId, appName: appName))
-            }
+            publicationTracker.publish(.appDeactivated(bundleId: bundleId, appName: appName), to: eventBus)
         }
     }
 
     public func stop() async {
+        publicationTracker?.stopAccepting()
         if let activateObserver {
             notificationCenter.removeObserver(activateObserver)
             self.activateObserver = nil
@@ -65,5 +65,7 @@ public final class WorkspaceMonitor: EventSource, @unchecked Sendable {
             notificationCenter.removeObserver(deactivateObserver)
             self.deactivateObserver = nil
         }
+        await publicationTracker?.drain()
+        publicationTracker = nil
     }
 }

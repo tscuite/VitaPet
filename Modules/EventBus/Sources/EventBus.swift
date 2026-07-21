@@ -29,13 +29,16 @@ public actor EventBus {
         subscriptions.removeValue(forKey: id)
     }
 
-    public func publish(_ event: AppEvent) {
+    public func publish(_ event: AppEvent) async {
         let matchingHandlers = subscriptions.values.filter { $0.filter(event) }.map(\.handler)
 
-        for handler in matchingHandlers {
-            Task {
-                await handler(event)
+        await withTaskGroup(of: Void.self) { group in
+            for handler in matchingHandlers {
+                group.addTask {
+                    await handler(event)
+                }
             }
+            await group.waitForAll()
         }
     }
 }

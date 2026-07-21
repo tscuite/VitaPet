@@ -331,6 +331,15 @@ final class OllamaServiceTests: XCTestCase {
         XCTAssertEqual(request.url?.absoluteString, "http://127.0.0.1:8787/v1/chat/completions")
     }
 
+    func testOpenAIModelsURLSupportsNonV1CompletionsPrefix() {
+        let endpoint = URL(string: "https://gateway.example/custom/chat/completions")!
+
+        XCTAssertEqual(
+            OllamaService.resolveOpenAIModelsURL(from: endpoint).absoluteString,
+            "https://gateway.example/custom/models"
+        )
+    }
+
     func testBuildOpenAICompatibleChatRequest_setsBearerWhenAuthorizationProvided() throws {
         let endpoint = URL(string: "https://api.openai.com/v1")!
 
@@ -823,6 +832,89 @@ final class OllamaServiceTests: XCTestCase {
         XCTAssertNil(updates[1].petName)
     }
 
+    func testSend_waitsForConversationUpdateCallbackBeforeFinishingStream() async throws {
+        let service = OllamaService(
+            endpoint: URL(string: "http://unit.test")!,
+            model: "llama3.2"
+        )
+        let blocker = ConversationCallbackBlocker()
+
+        OllamaServiceURLProtocol.install { request in
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            if request.url?.path == "/api/chat" {
+                return (
+                    response,
+                    Data(
+                        """
+                        {"model":"llama3.2","message":{"role":"assistant","content":"喵"},"done":false}
+                        {"model":"llama3.2","message":{"role":"assistant","content":""},"done":true}
+                        """.utf8
+                    )
+                )
+            }
+            return (response, Data(#"{"models":[]}"#.utf8))
+        }
+
+        await service.setOnConversationUpdated { _, _, _, _, _ in
+            await blocker.waitOnFirstCallback()
+        }
+        let stream = try await service.send(message: "你好")
+        let consumer = Task {
+            for try await _ in stream {}
+            await blocker.markStreamFinished()
+        }
+
+        await blocker.waitUntilCallbackStarted()
+        let drain = Task {
+            await service.cancelActiveRequestsAndWait()
+            await blocker.markDrainFinished()
+        }
+        await Task.yield()
+        let didFinishBeforeRelease = await blocker.didStreamFinish
+        let didDrainBeforeRelease = await blocker.didDrainFinish
+        XCTAssertFalse(didFinishBeforeRelease)
+        XCTAssertFalse(didDrainBeforeRelease)
+        await blocker.releaseCallback()
+        try await consumer.value
+        await drain.value
+        let didFinishAfterRelease = await blocker.didStreamFinish
+        let didDrainAfterRelease = await blocker.didDrainFinish
+        XCTAssertTrue(didFinishAfterRelease)
+        XCTAssertTrue(didDrainAfterRelease)
+    }
+
+    func testCancelActiveRequestsAndWait_rejectsLateRequests() async {
+        let service = OllamaService(
+            endpoint: URL(string: "http://unit.test")!,
+            model: "llama3.2"
+        )
+
+        await service.cancelActiveRequestsAndWait()
+
+        do {
+            _ = try await service.send(message: "late")
+            XCTFail("A drained service must reject a late send")
+        } catch OllamaServiceError.serviceUnavailable {
+            // Expected.
+        } catch {
+            XCTFail("Unexpected send error: \(error)")
+        }
+
+        do {
+            _ = try await service.sendWithTools(message: "late", tools: [], onToolCall: { _ in nil })
+            XCTFail("A drained service must reject a late tool send")
+        } catch OllamaServiceError.serviceUnavailable {
+            // Expected.
+        } catch {
+            XCTFail("Unexpected tool-send error: \(error)")
+        }
+    }
+
     func testSend_openAICompatibleBackendYieldsAssistantContent() async throws {
         let service = OllamaService(
             endpoint: URL(string: "http://unit.test")!,
@@ -939,6 +1031,25 @@ final class OllamaServiceTests: XCTestCase {
         XCTAssertEqual(config.model, "qwen2.5")
         let backend = await service.backendSnapshot()
         XCTAssertEqual(backend, .openAICompatible)
+    }
+
+    func testInitAndUpdateConfig_resolveOnlyBlankModels() async {
+        let service = OllamaService(
+            endpoint: URL(string: "http://localhost:11434")!,
+            model: "   ",
+            backend: .ollama
+        )
+        let initial = await service.configSnapshot()
+        XCTAssertEqual(initial.model, AIBackend.ollama.defaultModel)
+
+        await service.updateConfig(
+            endpoint: URL(string: "http://unit.test/v1")!,
+            model: "\n\t",
+            backend: .openAICompatible,
+            openAIApiKey: ""
+        )
+        let updated = await service.configSnapshot()
+        XCTAssertEqual(updated.model, AIBackend.openAICompatible.defaultModel)
     }
 
     func testSendWithTools_replaysToolResultsForOpenAICompatible() async throws {
@@ -1494,5 +1605,47 @@ final class OllamaServiceTests: XCTestCase {
 
         XCTAssertLessThan(cancellationStarted.duration(to: clock.now), .seconds(1))
         await client.close()
+    }
+}
+
+private actor ConversationCallbackBlocker {
+    private var callbackCount = 0
+    private var callbackStarted = false
+    private var callbackStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var didStreamFinish = false
+    private(set) var didDrainFinish = false
+
+    func waitOnFirstCallback() async {
+        callbackCount += 1
+        guard callbackCount == 1 else { return }
+        callbackStarted = true
+        let waiters = callbackStartWaiters
+        callbackStartWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+        await withCheckedContinuation { continuation in
+            releaseWaiters.append(continuation)
+        }
+    }
+
+    func waitUntilCallbackStarted() async {
+        if callbackStarted { return }
+        await withCheckedContinuation { continuation in
+            callbackStartWaiters.append(continuation)
+        }
+    }
+
+    func releaseCallback() {
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    func markStreamFinished() {
+        didStreamFinish = true
+    }
+
+    func markDrainFinished() {
+        didDrainFinish = true
     }
 }

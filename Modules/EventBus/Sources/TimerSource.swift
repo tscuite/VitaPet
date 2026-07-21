@@ -37,7 +37,9 @@ public actor TimerSource: EventSource {
     }
 
     public func stop() async {
-        timerTask?.cancel()
+        let task = timerTask
         timerTask = nil
+        task?.cancel()
+        await task?.value
     }
 }

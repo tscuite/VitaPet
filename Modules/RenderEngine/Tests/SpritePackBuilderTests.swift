@@ -46,6 +46,33 @@ final class SpritePackBuilderTests: XCTestCase {
         )
     }
 
+    func testAutoDetectPrefersLongestOverlappingAnimationStateName() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        try createPNG(named: "pet_danceCombo_0", in: directory)
+        try createPNG(named: "pet_somersaultCombo_0", in: directory)
+        try createPNG(named: "pet_joySpinCombo_0", in: directory)
+
+        let detected = SpritePackBuilder.autoDetect(from: directory)
+
+        XCTAssertEqual(
+            detected[AnimationState.danceCombo.rawValue]?.map(\.lastPathComponent),
+            ["pet_danceCombo_0.png"]
+        )
+        XCTAssertEqual(
+            detected[AnimationState.somersaultCombo.rawValue]?.map(\.lastPathComponent),
+            ["pet_somersaultCombo_0.png"]
+        )
+        XCTAssertEqual(
+            detected[AnimationState.joySpinCombo.rawValue]?.map(\.lastPathComponent),
+            ["pet_joySpinCombo_0.png"]
+        )
+        XCTAssertNil(detected[AnimationState.dance.rawValue])
+        XCTAssertNil(detected[AnimationState.somersault.rawValue])
+        XCTAssertNil(detected[AnimationState.spin.rawValue])
+    }
+
     func testBuildCreatesSpritePackDirectoryManifestAndImages() throws {
         let workspace = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: workspace) }

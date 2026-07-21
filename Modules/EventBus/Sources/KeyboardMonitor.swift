@@ -12,6 +12,7 @@ public final class KeyboardMonitor: EventSource, @unchecked Sendable {
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var isStarted = false
+    private var publicationTracker: EventPublicationTracker?
 
     public init(
         addGlobalMonitor: @escaping (@escaping (NSEvent) -> Void) -> Any? = { handler in
@@ -35,23 +36,27 @@ public final class KeyboardMonitor: EventSource, @unchecked Sendable {
         }
 
         isStarted = true
+        let publicationTracker = EventPublicationTracker()
+        self.publicationTracker = publicationTracker
 
         globalMonitor = addGlobalMonitor { event in
-            Task {
-                await eventBus.publish(.hotkeyPressed(
+            publicationTracker.publish(
+                .hotkeyPressed(
                     keyCode: event.keyCode,
                     modifiers: UInt32(event.modifierFlags.rawValue)
-                ))
-            }
+                ),
+                to: eventBus
+            )
         }
 
         localMonitor = addLocalMonitor { event in
-            Task {
-                await eventBus.publish(.hotkeyPressed(
+            publicationTracker.publish(
+                .hotkeyPressed(
                     keyCode: event.keyCode,
                     modifiers: UInt32(event.modifierFlags.rawValue)
-                ))
-            }
+                ),
+                to: eventBus
+            )
 
             return Self.isChatHotkey(
                 keyCode: event.keyCode,
@@ -61,6 +66,7 @@ public final class KeyboardMonitor: EventSource, @unchecked Sendable {
     }
 
     public func stop() async {
+        publicationTracker?.stopAccepting()
         if let globalMonitor {
             removeMonitor(globalMonitor)
             self.globalMonitor = nil
@@ -72,6 +78,8 @@ public final class KeyboardMonitor: EventSource, @unchecked Sendable {
         }
 
         isStarted = false
+        await publicationTracker?.drain()
+        publicationTracker = nil
     }
 
     public static func isChatHotkey(keyCode: UInt16, modifiers: UInt32) -> Bool {

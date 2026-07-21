@@ -41,6 +41,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var bufferedEventRecorder: BufferedEventRecorder?
     private var bufferedEventFlushTask: Task<Void, Never>?
     private var storageMaintenanceTask: Task<Void, Never>?
+    private var storageMaintenanceCoordinator: StorageMaintenanceCoordinator?
+    private var storageSchemaReadiness: StorageSchemaReadiness?
     private let capabilityManager = CapabilityManager()
     private var pluginManager: PluginManager!
     private var configManager: ConfigManager!
@@ -49,6 +51,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var aiProactiveTrigger: AIProactiveTrigger?
     private var aiStatus: AIEngine.AIEngineStatus = .notConfigured
     private var ollamaService: OllamaService?
+    private var aiConfigurationTask: Task<Void, Never>?
+    private var aiConfigurationRevision: UInt64 = 0
+    private var externalChatTask: Task<Void, Never>?
+    private var notificationAITasks: [UUID: Task<Void, Never>] = [:]
     private var memoryWorkerService: MemoryWorkerService?
     private var interactionManager: PetInteractionManager!
     private var desktopAwareness = DesktopAwarenessController()
@@ -60,15 +66,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var chatPathToolActionFired = false
     private static let memoryExtractionEveryNTurns = 2
     private var memoryRemoteSyncTask: Task<Void, Never>?
+    private var memoryExtractionTask: Task<Void, Never>?
+    private var memoryImmediateSyncTask: Task<Void, Never>?
+    private var memoryImmediateSyncRevision: UInt64 = 0
     /// 周期性把本地未同步的记忆推到远端，避免单次失败后只能等下次抽取/重启才重传。
     private static let memoryRemoteFlushInterval: UInt64 = 10 * 60 * 1_000_000_000
     private let maximumPets = 5
     private let windowDetector = WindowDetector()
+    private var bootstrapTask: Task<Void, Never>?
     private var terminationInProgress = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        Task { @MainActor in
-            await bootstrap()
+        bootstrapTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.bootstrap()
+            self.bootstrapTask = nil
         }
     }
 
@@ -76,8 +88,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !terminationInProgress else { return .terminateLater }
         terminationInProgress = true
         Task { @MainActor in
-            await orderlyShutdown()
-            NSApp.reply(toApplicationShouldTerminate: true)
+            let canTerminate = await orderlyShutdown()
+            if !canTerminate {
+                terminationInProgress = false
+            }
+            NSApp.reply(toApplicationShouldTerminate: canTerminate)
         }
         return .terminateLater
     }
@@ -87,16 +102,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         aiProactiveTrigger?.stop()
     }
 
-    private func orderlyShutdown() async {
-        chatViewModel?.cancelStreaming()
-        aiProactiveTrigger?.stop()
-        timeWeatherController.stop()
-        memoryRemoteSyncTask?.cancel()
-        memoryRemoteSyncTask = nil
-        _ = persistenceWriteGate?.seal()
-        bufferedEventFlushTask?.cancel()
-        storageMaintenanceTask?.cancel()
+    private func orderlyShutdown() async -> Bool {
+        let bootstrapTask = bootstrapTask
+        bootstrapTask?.cancel()
+        await bootstrapTask?.value
+        self.bootstrapTask = nil
 
+        chatViewModel?.cancelStreaming()
+        await aiProactiveTrigger?.stopAndWait()
+        timeWeatherController.stop()
+        let memoryTask = memoryRemoteSyncTask
+        memoryTask?.cancel()
+        memoryRemoteSyncTask = nil
+        let memoryExtractionTask = memoryExtractionTask
+        memoryExtractionTask?.cancel()
+        self.memoryExtractionTask = nil
+        let memoryImmediateSyncTask = memoryImmediateSyncTask
+        memoryImmediateSyncTask?.cancel()
+        self.memoryImmediateSyncTask = nil
+        let flushTask = bufferedEventFlushTask
+        flushTask?.cancel()
+        bufferedEventFlushTask = nil
+        let maintenanceTask = storageMaintenanceTask
+        maintenanceTask?.cancel()
+        storageMaintenanceTask = nil
+        let maintenanceCoordinator = storageMaintenanceCoordinator
+        let aiConfigurationTask = aiConfigurationTask
+        aiConfigurationTask?.cancel()
+        self.aiConfigurationTask = nil
+        let externalChatTask = externalChatTask
+        externalChatTask?.cancel()
+        self.externalChatTask = nil
+        await chatViewModel?.stopAcceptingWorkAndWait()
+        await memoryTask?.value
+        await memoryExtractionTask?.value
+        await memoryImmediateSyncTask?.value
+        await flushTask?.value
+        await maintenanceCoordinator?.cancelAndWait()
+        await maintenanceTask?.value
+        await aiConfigurationTask?.value
+        await externalChatTask?.value
         await timerSource?.stop()
         await hourBoundaryTimer?.stop()
         await sitReminderTimer?.stop()
@@ -110,9 +155,136 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         await webhookServer?.stop()
         await pluginManager?.stop()
         if let eventSubscriptionID { await eventBus.unsubscribe(eventSubscriptionID) }
-        _ = try? await bufferedEventRecorder?.flushUntilEmpty()
-        await databaseManager?.close()
+        let notificationTasks = Array(notificationAITasks.values)
+        notificationTasks.forEach { $0.cancel() }
+        for task in notificationTasks {
+            await task.value
+        }
+        notificationAITasks.removeAll()
+        await ollamaService?.cancelActiveRequestsAndWait()
+        await bufferedEventRecorder?.seal()
+        if let bufferedEventRecorder {
+            var flushedLiveBuffers = false
+            do {
+                try await bufferedEventRecorder.flushUntilEmpty()
+                flushedLiveBuffers = true
+            } catch {
+                AppLogger.error("Failed to flush buffered events during shutdown: \(error.localizedDescription)")
+                do {
+                    let pendingBatches = await bufferedEventRecorder.pendingBatchesForRecovery()
+                    try EventRollupRecoveryStore().save(pendingBatches)
+                    AppLogger.info(
+                        "Saved \(pendingBatches.count) buffered event batch(es) for replay on next launch"
+                    )
+                } catch {
+                    AppLogger.error(
+                        "Failed to save buffered-event recovery file: \(error.localizedDescription)"
+                    )
+                    return false
+                }
+            }
+            if flushedLiveBuffers {
+                do {
+                    // A prior failed termination attempt may have persisted these
+                    // same stable batch IDs. Once the live retry commits, retaining
+                    // that file would replay already-committed data on next launch.
+                    try EventRollupRecoveryStore().removeIfPresent()
+                } catch {
+                    AppLogger.error(
+                        "Failed to remove committed buffered-event recovery file: \(error.localizedDescription)"
+                    )
+                    return false
+                }
+            }
+        }
+        _ = await persistenceWriteGate?.sealAndWait()
+        if let databaseManager {
+            do {
+                try await databaseManager.checkpointForShutdown()
+            } catch DatabaseLifecycleError.closeFailed(_) {
+                // The prior attempt already checkpointed before close failed; allow
+                // close() below to retry the retained SQLite handle.
+            } catch DatabaseLifecycleError.closed {
+                // A repeated orderly-shutdown attempt is idempotent.
+            } catch {
+                AppLogger.error("Failed to checkpoint database during shutdown: \(error.localizedDescription)")
+                return false
+            }
+
+            var closeResult = await databaseManager.close()
+            if !closeResult.succeeded {
+                try? await Task.sleep(for: .milliseconds(100))
+                closeResult = await databaseManager.close()
+            }
+            guard closeResult.succeeded else {
+                if case let .failed(failure) = closeResult {
+                    AppLogger.error(
+                        "Failed to close database during shutdown (SQLite \(failure.resultCode)): \(failure.message)"
+                    )
+                }
+                return false
+            }
+        }
         VitaPetApp.releaseAppLock()
+        return true
+    }
+
+    private func startStorageMaintenanceSchedulerIfEnabled() {
+        guard !terminationInProgress,
+              storageSchemaReadiness?.optimized == true,
+              storageMaintenanceTask == nil,
+              let coordinator = storageMaintenanceCoordinator else {
+            return
+        }
+
+        storageMaintenanceTask = Task { [coordinator] in
+            try? await Task.sleep(nanoseconds: 60 * 1_000_000_000)
+            while !Task.isCancelled {
+                _ = try? await coordinator.run()
+                guard !Task.isCancelled else { return }
+                try? await Task.sleep(
+                    nanoseconds: UInt64(StoragePolicy.default.maintenanceInterval * 1_000_000_000)
+                )
+            }
+        }
+    }
+
+    private func scheduleAIServiceConfiguration(
+        endpoint: URL,
+        model: String,
+        backend: AIBackend,
+        openAIApiKey: String,
+        mcpServers: [MCPServerConfiguration],
+        systemPrompt: String
+    ) {
+        guard !terminationInProgress, let ollamaService else { return }
+        aiConfigurationRevision &+= 1
+        let revision = aiConfigurationRevision
+        aiConfigurationTask?.cancel()
+        aiConfigurationTask = Task { @MainActor [weak self] in
+            guard let self,
+                  !Task.isCancelled,
+                  self.aiConfigurationRevision == revision else {
+                return
+            }
+
+            await ollamaService.updateConfig(
+                endpoint: endpoint,
+                model: model,
+                backend: backend,
+                openAIApiKey: openAIApiKey,
+                mcpServers: mcpServers
+            )
+            guard !Task.isCancelled, self.aiConfigurationRevision == revision else { return }
+            await ollamaService.updateSystemPrompt(systemPrompt)
+            guard !Task.isCancelled, self.aiConfigurationRevision == revision else { return }
+            await ollamaService.checkConnection()
+            guard !Task.isCancelled, self.aiConfigurationRevision == revision else { return }
+
+            self.aiStatus = await ollamaService.status
+            self.chatViewModel?.refreshStatus()
+            self.aiConfigurationTask = nil
+        }
     }
 
     private func bootstrap() async {
@@ -121,11 +293,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         L10n.locale = configManager.config.locale
         installMainMenuIfNeeded()
         let initialEndpointValue = Self.normalizedAIEndpoint(configManager.config.ollamaEndpoint)
-        let initialBackend = Self.inferredAIBackend(
-            preferred: Self.resolvedAIBackend(from: configManager.config.aiBackend),
-            endpointValue: initialEndpointValue
-        )
-        let initialModel = Self.normalizedAIModel(configManager.config.ollamaModel, backend: initialBackend)
+        let initialBackend = Self.resolvedAIBackend(from: configManager.config.aiBackend)
+        let initialModel = AIModelSelection.resolvedModel(configManager.config.ollamaModel, for: initialBackend)
         let initialMCPServers = Self.decodedMCPServers(from: configManager.config.mcpServersJSON)
         let initialEndpoint = URL(string: initialEndpointValue) ?? URL(string: "http://localhost:11434")!
         let ollamaService = OllamaService(
@@ -144,14 +313,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         await ollamaService.updateMCPServers(initialMCPServers)
         await ollamaService.updateSystemPrompt(configManager.config.aiSystemPrompt)
 
-        Task {
-            await ollamaService.checkConnection()
-            aiStatus = await ollamaService.status
-        }
-
         let chatViewModel = ChatViewModel(
             sendToAI: { [weak self] conversationId, message, _ in
                 guard let self else {
+                    throw OllamaServiceError.serviceUnavailable
+                }
+                guard await MainActor.run(body: { !self.terminationInProgress }) else {
                     throw OllamaServiceError.serviceUnavailable
                 }
 
@@ -182,6 +349,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         )
         self.chatViewModel = chatViewModel
+        scheduleAIServiceConfiguration(
+            endpoint: initialEndpoint,
+            model: initialModel,
+            backend: initialBackend,
+            openAIApiKey: configManager.config.openAIApiKey,
+            mcpServers: initialMCPServers,
+            systemPrompt: configManager.config.aiSystemPrompt
+        )
         chatViewModel.onUserSent = { [weak self] _, userMessage in
             Task { @MainActor in
                 guard let self else {
@@ -245,7 +420,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.chatPathToolActionFired = false
                 self.conversationTurnCount += 1
                 if self.conversationTurnCount % Self.memoryExtractionEveryNTurns == 0 {
-                    Task { await self.runMemoryExtractionCycle() }
+                    self.scheduleMemoryExtractionCycle()
                 }
             }
         }
@@ -267,29 +442,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         }
         chatViewModel.onCreateGroup = { [weak self] _, _ in
-            guard let self, let databaseManager = self.databaseManager else {
+            guard let self,
+                  let thread = chatViewModel.conversations.last(where: { $0.type == .group }) else {
                 return
             }
-
-            Task {
-                do {
-                    if let thread = chatViewModel.conversations.last(where: { $0.type == .group }) {
-                        try await databaseManager.insertConversation(
-                            id: thread.id,
-                            type: thread.type.rawValue,
-                            participantIds: thread.participantIds,
-                            title: thread.title
-                        )
-                    }
-                } catch {
-                    AppLogger.error("Failed to create group: \(error.localizedDescription)")
-                }
+            let id = thread.id
+            let type = thread.type.rawValue
+            let participantIds = thread.participantIds
+            let title = thread.title
+            self.enqueuePersistenceWrite("create group conversation") { databaseManager in
+                try await databaseManager.insertConversation(
+                    id: id,
+                    type: type,
+                    participantIds: participantIds,
+                    title: title
+                )
             }
         }
-        let onSaveAIConfig: @MainActor (String, String, String, AIBackend, String, String) -> Void = { [weak self, weak configManager] endpoint, model, aiSystemPrompt, backend, openAIApiKey, mcpServersJSON in
+        let onSaveAIConfig: @MainActor (String, String, String, AIBackend, String, String) -> String? = { [weak self, weak configManager] endpoint, model, aiSystemPrompt, backend, openAIApiKey, mcpServersJSON in
             guard let self,
-                  let configManager else {
-                return
+                  let configManager,
+                  !self.terminationInProgress else {
+                return "配置服务不可用"
             }
 
             let trimmedPrompt = aiSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -297,16 +471,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let normalizedMCPServersJSON = Self.normalizedMCPServersJSON(mcpServersJSON)
             let resolvedMCPServers = Self.decodedMCPServers(from: normalizedMCPServersJSON)
             let resolvedEndpointValue = Self.normalizedAIEndpoint(endpoint)
-            let currentBackend = Self.inferredAIBackend(
-                preferred: Self.resolvedAIBackend(from: configManager.config.aiBackend),
-                endpointValue: configManager.config.ollamaEndpoint
-            )
-            let effectiveBackend = Self.inferredAIBackend(preferred: backend, endpointValue: resolvedEndpointValue)
-            let resolvedModel = Self.normalizedAIModel(
-                model,
-                backend: effectiveBackend,
-                previousBackend: currentBackend
-            )
+            let effectiveBackend = backend
+            let resolvedModel = AIModelSelection.resolvedModel(model, for: effectiveBackend)
             let resolvedEndpoint = URL(string: resolvedEndpointValue) ?? URL(string: "http://localhost:11434")!
 
             do {
@@ -320,26 +486,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             } catch {
                 AppLogger.error("Failed to save AI config: \(error.localizedDescription)")
+                return error.localizedDescription
             }
 
-            Task {
-                await ollamaService.updateConfig(
-                    endpoint: resolvedEndpoint,
-                    model: resolvedModel,
-                    backend: effectiveBackend,
-                    openAIApiKey: trimmedOpenAIKey,
-                    mcpServers: resolvedMCPServers
-                )
-                await ollamaService.updateSystemPrompt(trimmedPrompt)
-                await ollamaService.checkConnection()
-                self.aiStatus = await ollamaService.status
-                chatViewModel.refreshStatus()
-            }
+            self.scheduleAIServiceConfiguration(
+                endpoint: resolvedEndpoint,
+                model: resolvedModel,
+                backend: effectiveBackend,
+                openAIApiKey: trimmedOpenAIKey,
+                mcpServers: resolvedMCPServers,
+                systemPrompt: trimmedPrompt
+            )
+            return nil
         }
         let onSaveAIMemoryConfig: @MainActor (Bool, String, String, String, String, String, String, Int) -> Void = {
             [weak self, weak configManager] enabled, endpoint, authMode, username, secret, scope, subject, queryLimit in
             guard let self,
-                  let configManager else {
+                  let configManager,
+                  !self.terminationInProgress else {
                 return
             }
 
@@ -370,26 +534,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let memoryConfig = Self.memoryWorkerConfig(from: configManager.config)
             if memoryConfig.enabled {
                 if let service = self.memoryWorkerService {
-                    Task {
+                    self.replaceMemoryImmediateSyncTask {
+                        [weak self] in
+                        guard let self else { return }
                         await service.updateConfig(memoryConfig)
                         await self.pushUnsyncedMemoriesToRemote()
                     }
                 } else {
                     self.memoryWorkerService = MemoryWorkerService(config: memoryConfig)
-                    Task {
+                    self.replaceMemoryImmediateSyncTask { [weak self] in
+                        guard let self else { return }
                         await self.pushUnsyncedMemoriesToRemote()
                     }
                 }
             } else {
                 self.memoryWorkerService = nil
+                self.replaceMemoryImmediateSyncTask {}
             }
         }
-        let onTestConnection: @MainActor () -> Void = { [weak self] in
-            Task {
-                await ollamaService.checkConnection()
-                chatViewModel.refreshStatus()
-                self?.aiStatus = await ollamaService.status
-            }
+        let onTestConnection: @MainActor () -> Void = { [weak self, weak configManager] in
+            guard let configManager else { return }
+            let config = configManager.config
+            let endpointValue = Self.normalizedAIEndpoint(config.ollamaEndpoint)
+            let endpoint = URL(string: endpointValue) ?? URL(string: "http://localhost:11434")!
+            let backend = Self.resolvedAIBackend(from: config.aiBackend)
+            let model = AIModelSelection.resolvedModel(config.ollamaModel, for: backend)
+            let mcpServers = Self.decodedMCPServers(from: config.mcpServersJSON)
+            self?.scheduleAIServiceConfiguration(
+                endpoint: endpoint,
+                model: model,
+                backend: backend,
+                openAIApiKey: config.openAIApiKey,
+                mcpServers: mcpServers,
+                systemPrompt: config.aiSystemPrompt
+            )
         }
         let onTestAIMemoryConnection: @MainActor () async -> String? = { [weak configManager] in
             guard let configManager else {
@@ -489,29 +667,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        let initialStorageReadiness: StorageSchemaReadiness
         do {
-            _ = try await databaseManager.initialize()
+            initialStorageReadiness = try await databaseManager.initialize()
             try await databaseManager.migrateMemoryHashesToStableFingerprintIfNeeded()
+            let recoveryStore = EventRollupRecoveryStore()
+            let recoveredBatches = try recoveryStore.load()
+            for batch in recoveredBatches {
+                _ = try await databaseManager.commitEventRollupBatch(batch)
+            }
+            if !recoveredBatches.isEmpty {
+                try recoveryStore.removeIfPresent()
+            }
         } catch {
             AppLogger.error("Failed to initialize database: \(error.localizedDescription)")
             return
         }
 
+        let persistenceWriteGate = PersistenceWriteGate()
+        let storageMaintenanceCoordinator = StorageMaintenanceCoordinator {
+            try await databaseManager.performStorageMaintenance()
+        }
+        self.databaseManager = databaseManager
+        self.persistenceWriteGate = persistenceWriteGate
+        self.storageMaintenanceCoordinator = storageMaintenanceCoordinator
+        self.storageSchemaReadiness = initialStorageReadiness
+
         await ollamaService.setOnConversationUpdated { [weak databaseManager] role, content, sessionId, petId, petName in
             guard let databaseManager else {
                 return
             }
-            try? await databaseManager.insertConversationTurn(
-                role: role,
-                content: content,
-                sessionId: sessionId,
-                petId: petId,
-                petName: petName
-            )
+            do {
+                let task = try persistenceWriteGate.submit {
+                    try await databaseManager.insertConversationTurn(
+                        role: role,
+                        content: content,
+                        sessionId: sessionId,
+                        petId: petId,
+                        petName: petName
+                    )
+                }
+                try await task.value
+            } catch {
+                AppLogger.error("Failed to persist conversation turn: \(error.localizedDescription)")
+            }
         }
 
-        self.databaseManager = databaseManager
-        self.persistenceWriteGate = PersistenceWriteGate()
         self.bufferedEventRecorder = BufferedEventRecorder { [weak databaseManager] batch in
             guard let databaseManager else {
                 throw NSError(domain: "VitaPet.Persistence", code: 1, userInfo: [NSLocalizedDescriptionKey: "Database unavailable"])
@@ -526,15 +727,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 _ = try? await recorder.flush()
             }
         }
-        self.storageMaintenanceTask = Task { [weak databaseManager] in
-            try? await Task.sleep(nanoseconds: 60 * 1_000_000_000)
-            while !Task.isCancelled {
-                if let databaseManager {
-                    _ = try? await databaseManager.performStorageMaintenance()
-                }
-                try? await Task.sleep(nanoseconds: UInt64(StoragePolicy.default.maintenanceInterval * 1_000_000_000))
-            }
-        }
+        startStorageMaintenanceSchedulerIfEnabled()
         await syncFromRemoteMemories(databaseManager: databaseManager)
         await pushUnsyncedMemoriesToRemote()
         await refreshMemoryContext()
@@ -662,21 +855,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.configManager.config.pets.map { (id: $0.id, name: $0.name) } ?? []
             },
             onDeleteConversation: { [weak self] conversationId in
-                guard let self, let databaseManager = self.databaseManager else {
-                    return
-                }
-
-                Task {
-                    try? await databaseManager.deleteConversation(id: conversationId)
+                self?.enqueuePersistenceWrite("delete conversation") { databaseManager in
+                    try await databaseManager.deleteConversation(id: conversationId)
                 }
             },
             onUpdateConversationParticipants: { [weak self] conversationId, participantIds in
-                guard let self, let databaseManager = self.databaseManager else {
-                    return
-                }
-
-                Task {
-                    try? await databaseManager.updateConversationParticipantIds(
+                self?.enqueuePersistenceWrite("update conversation participants") { databaseManager in
+                    try await databaseManager.updateConversationParticipantIds(
                         id: conversationId,
                         participantIds: participantIds
                     )
@@ -752,9 +937,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 configManager?.config.ollamaEndpoint ?? "http://localhost:11434"
             },
             aiBackend: { [weak configManager] in
-                let endpoint = configManager?.config.ollamaEndpoint ?? ""
-                let preferred = Self.resolvedAIBackend(from: configManager?.config.aiBackend ?? "ollama")
-                return Self.inferredAIBackend(preferred: preferred, endpointValue: endpoint)
+                Self.resolvedAIBackend(from: configManager?.config.aiBackend ?? "ollama")
             },
             aiModel: { [weak configManager] in
                 configManager?.config.ollamaModel ?? "llama3.2"
@@ -830,23 +1013,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onSave: onSaveChatAppearance
         )
         chatController.configureStorageManagement(
-            summary: {
-                "每个会话保留最近 500 条；旧记录按 250 条压缩归档；文件事件每 30 秒批量写入。"
+            summary: { [weak self] in
+                if self?.storageSchemaReadiness?.optimized == true {
+                    return "每个会话保留最近 500 条；旧记录压缩归档；每日自动整理已启用。"
+                }
+                return "旧数据库需要先执行一次“立即整理”来建立索引；完成后会自动启用每日维护。"
             },
             onRefresh: { [weak self] in
-                guard let databaseManager = self?.databaseManager else { return "数据库不可用" }
+                guard let self, let databaseManager = self.databaseManager else { return "数据库不可用" }
+                guard !self.terminationInProgress else { return "应用正在退出" }
                 do {
-                    let archives = try await databaseManager.listConversationArchives()
-                    return "当前压缩归档 \(archives.count) 个"
+                    let metrics = try await databaseManager.fetchStorageMetrics()
+                    let readiness = try await databaseManager.currentStorageSchemaReadiness()
+                    self.storageSchemaReadiness = readiness
+                    self.startStorageMaintenanceSchedulerIfEnabled()
+                    let totalBytes = metrics.databaseBytes.addingReportingOverflow(metrics.walBytes)
+                    let storedBytes = totalBytes.overflow ? Int64.max : totalBytes.partialValue
+                    return "实时对话 \(metrics.liveConversationTurnCount) 条，压缩归档 \(metrics.conversationArchiveCount) 个（\(Self.storageByteText(metrics.archiveCompressedBytes))），事件明细 \(metrics.rawEventCount) 条，数据库 \(Self.storageByteText(storedBytes))"
                 } catch {
                     return "读取存储状态失败：\(error.localizedDescription)"
                 }
             },
             onMaintain: { [weak self] in
-                guard let databaseManager = self?.databaseManager else { return "数据库不可用" }
+                guard let self,
+                      let databaseManager = self.databaseManager,
+                      let coordinator = self.storageMaintenanceCoordinator else {
+                    return "数据库不可用"
+                }
+                guard !self.terminationInProgress else { return "应用正在退出" }
                 do {
-                    let result = try await databaseManager.performStorageMaintenance()
-                    return "已整理：归档 \(result.archivedTurnCount) 条，回填 \(result.rolledUpEventCount) 条，删除事件 \(result.deletedEventCount) 条"
+                    let result = try await coordinator.run()
+                    guard !self.terminationInProgress else { return "应用正在退出，整理已停止" }
+                    let readiness = try await databaseManager.currentStorageSchemaReadiness()
+                    self.storageSchemaReadiness = readiness
+                    self.startStorageMaintenanceSchedulerIfEnabled()
+                    return "已整理：归档 \(result.archivedTurnCount) 条，回填 \(result.rolledUpEventCount) 条，删除事件 \(result.deletedEventCount) 条，释放 \(Self.storageByteText(result.reclaimedBytes))"
                 } catch {
                     return "整理失败：\(error.localizedDescription)"
                 }
@@ -997,8 +1198,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     // 同步更新对话标题
                     let conversationId = "single_\(id.uuidString)"
                     self.chatViewModel.updateConversationTitle(conversationId, title: name)
-                    Task {
-                        try? await self.databaseManager?.updateConversationTitle(id: conversationId, title: name)
+                    self.enqueuePersistenceWrite("update conversation title") { databaseManager in
+                        try await databaseManager.updateConversationTitle(id: conversationId, title: name)
                     }
                 } catch {
                     AppLogger.error("Failed to update pet: \(error.localizedDescription)")
@@ -1265,7 +1466,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         inputBarController = InputBarWindowController()
         inputBarController.onSubmitWithTargets = { [weak self] text, targetPetIDs in
-            guard let self else {
+            guard let self, !self.terminationInProgress else {
                 return
             }
 
@@ -1292,7 +1493,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 chatViewModel.addExternalMessage(text)
             }
 
-            Task {
+            self.externalChatTask?.cancel()
+            self.externalChatTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                defer { self.externalChatTask = nil }
                 do {
                     let sessionId = await MainActor.run {
                         if let selectedConversationId = chatViewModel.selectedConversationId {
@@ -1377,8 +1581,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                 }
 
                                 if let conversationId = chatViewModel.selectedConversationId {
-                                    Task {
-                                        try? await databaseManager.updateConversationLastMessage(
+                                    self.enqueuePersistenceWrite("update conversation preview") { databaseManager in
+                                        try await databaseManager.updateConversationLastMessage(
                                             id: conversationId,
                                             message: String(displayText.prefix(50)),
                                             timestamp: Date()
@@ -1391,9 +1595,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
                     self.conversationTurnCount += 1
                     if self.conversationTurnCount % Self.memoryExtractionEveryNTurns == 0 {
-                        Task {
-                            await self.runMemoryExtractionCycle()
-                        }
+                        self.scheduleMemoryExtractionCycle()
                     }
                 } catch {
                     await MainActor.run {
@@ -1482,21 +1684,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         interactionManager = PetInteractionManager()
         interactionManager.onInteractionTriggered = { [weak self] type, petNames in
-            guard let databaseManager = self?.databaseManager else {
-                return
-            }
-
-            Task {
-                do {
-                    try await databaseManager.insertEvent(
-                        source: "petInteraction",
-                        payload: try Self.encodePetInteractionPayload(
-                            PetInteractionEventPayload(type: type, pets: petNames)
-                        )
+            self?.enqueuePersistenceWrite("record pet interaction") { databaseManager in
+                try await databaseManager.insertEvent(
+                    source: "petInteraction",
+                    payload: try Self.encodePetInteractionPayload(
+                        PetInteractionEventPayload(type: type, pets: petNames)
                     )
-                } catch {
-                    AppLogger.error("Failed to record pet interaction: \(error.localizedDescription)")
-                }
+                )
             }
         }
         miniGameManager.configure(
@@ -1509,21 +1703,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         )
         miniGameManager.onGameStarted = { [weak self] gameName, petCount in
-            guard let databaseManager = self?.databaseManager else {
-                return
-            }
-
-            Task {
-                do {
-                    try await databaseManager.insertEvent(
-                        source: "gamePlay",
-                        payload: try Self.encodeGamePlayPayload(
-                            GamePlayEventPayload(game: gameName, petCount: petCount)
-                        )
+            self?.enqueuePersistenceWrite("record game start") { databaseManager in
+                try await databaseManager.insertEvent(
+                    source: "gamePlay",
+                    payload: try Self.encodeGamePlayPayload(
+                        GamePlayEventPayload(game: gameName, petCount: petCount)
                     )
-                } catch {
-                    AppLogger.error("Failed to record game start: \(error.localizedDescription)")
-                }
+                )
             }
         }
         pomodoroController.getPetControllers = { [weak self] in
@@ -1678,7 +1864,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleEvent(_ event: AppEvent) async {
-        recordEvent(event)
+        await recordEvent(event)
 
         if case .custom(let name, let payload) = event, name == "plugin.notification.request" {
             showNotification(
@@ -1696,22 +1882,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             // Try AI-enhanced display if Ollama is ready
-            if let ollamaService {
-                Task {
+            if let ollamaService, !terminationInProgress {
+                let taskID = UUID()
+                let task = Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    defer { self.notificationAITasks.removeValue(forKey: taskID) }
                     do {
                         let context = "你收到一条通知：来源=\(source)，标题=\(title)，内容=\(body)。用一句可爱的话转述给主人。"
                         let aiText = try await ollamaService.generateProactive(context: context)
-                        await MainActor.run {
-                            self.primaryPetController?.showBubble(aiText.isEmpty ? fallbackText : aiText)
-                        }
+                        guard !Task.isCancelled, !self.terminationInProgress else { return }
+                        self.primaryPetController?.showBubble(aiText.isEmpty ? fallbackText : aiText)
                     } catch {
-                        await MainActor.run {
+                        if !Task.isCancelled, !self.terminationInProgress {
                             self.primaryPetController?.showBubble(fallbackText)
                         }
                     }
                 }
+                notificationAITasks[taskID] = task
             } else {
-                primaryPetController?.showBubble(fallbackText)
+                if !terminationInProgress {
+                    primaryPetController?.showBubble(fallbackText)
+                }
             }
         }
 
@@ -1829,17 +2020,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 清理对话：直接操作数据库 + 内存
         chatController.removePetConversations(petId: id)
         // 数据库层面也直接删除单聊（避免内存未加载时遗漏）
-        Task {
-            try? await databaseManager?.deleteConversation(id: "single_\(id.uuidString)")
+        enqueuePersistenceWrite("remove pet conversations") { databaseManager in
+            try await databaseManager.deleteConversation(id: "single_\(id.uuidString)")
             // 查询数据库中包含该宠物的群聊并清理
-            if let conversations = try? await databaseManager?.fetchConversations() {
-                for conv in conversations where conv.type == .group && conv.participantIds.contains(id) {
-                    let remaining = conv.participantIds.filter { $0 != id }
-                    if remaining.count <= 1 {
-                        try? await databaseManager?.deleteConversation(id: conv.id)
-                    } else {
-                        try? await databaseManager?.updateConversationParticipantIds(id: conv.id, participantIds: remaining)
-                    }
+            let conversations = try await databaseManager.fetchConversations()
+            for conversation in conversations where conversation.type == .group && conversation.participantIds.contains(id) {
+                let remaining = conversation.participantIds.filter { $0 != id }
+                if remaining.count <= 1 {
+                    try await databaseManager.deleteConversation(id: conversation.id)
+                } else {
+                    try await databaseManager.updateConversationParticipantIds(
+                        id: conversation.id,
+                        participantIds: remaining
+                    )
                 }
             }
         }
@@ -1956,7 +2149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func createSingleConversationIfNeeded(for pet: PetIdentity) async {
-        guard let databaseManager, let chatViewModel else {
+        guard let chatViewModel else {
             return
         }
 
@@ -1975,12 +2168,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         chatViewModel.addConversation(thread)
 
         do {
-            try await databaseManager.insertConversation(
-                id: thread.id,
-                type: thread.type.rawValue,
-                participantIds: thread.participantIds,
-                title: thread.title
-            )
+            try await performPersistenceWrite("create single conversation") { databaseManager in
+                try await databaseManager.insertConversation(
+                    id: thread.id,
+                    type: thread.type.rawValue,
+                    participantIds: thread.participantIds,
+                    title: thread.title
+                )
+            }
         } catch {
             AppLogger.error("Failed to create single conversation: \(error.localizedDescription)")
         }
@@ -2000,18 +2195,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         })?.id
     }
 
-    private func recordEvent(_ event: AppEvent) {
+    private func enqueuePersistenceWrite(
+        _ description: String,
+        operation: @escaping @Sendable (DatabaseManager) async throws -> Void
+    ) {
+        guard !terminationInProgress,
+              let databaseManager,
+              let persistenceWriteGate else {
+            AppLogger.error("Cannot enqueue \(description): persistence is unavailable")
+            return
+        }
+
+        do {
+            let task = try persistenceWriteGate.submit {
+                try await operation(databaseManager)
+            }
+            Task {
+                do {
+                    try await task.value
+                } catch {
+                    AppLogger.error("Failed to \(description): \(error.localizedDescription)")
+                }
+            }
+        } catch {
+            AppLogger.error("Cannot enqueue \(description): \(error.localizedDescription)")
+        }
+    }
+
+    private func performPersistenceWrite<T: Sendable>(
+        _ description: String,
+        operation: @escaping @Sendable (DatabaseManager) async throws -> T
+    ) async throws -> T {
+        guard !terminationInProgress,
+              let databaseManager,
+              let persistenceWriteGate else {
+            throw PersistenceWriteGateError.closed
+        }
+        let task = try persistenceWriteGate.submit {
+            try await operation(databaseManager)
+        }
+        do {
+            return try await task.value
+        } catch {
+            AppLogger.error("Failed to \(description): \(error.localizedDescription)")
+            throw error
+        }
+    }
+
+    private func recordEvent(_ event: AppEvent) async {
         guard let databaseManager else {
             return
         }
 
         if case let .fileChanged(path, flags) = event,
            let bufferedEventRecorder {
-            Task {
-                await bufferedEventRecorder.record(
-                    FileEventDelivery(path: path, flags: flags)
-                )
-            }
+            await bufferedEventRecorder.record(
+                FileEventDelivery(path: path, flags: flags)
+            )
             return
         }
 
@@ -2023,11 +2263,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     payload: try Self.encodeEventPayload(from: event.metadata)
                 )
             }
-            Task {
-                do { try await task.value }
-                catch {
+            do {
+                try await task.value
+            } catch {
                 AppLogger.error("Failed to record event: \(error.localizedDescription)")
-                }
             }
         } catch {
             AppLogger.error("Persistence write gate closed: \(error.localizedDescription)")
@@ -2066,10 +2305,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MemoryContentHasher.stableHash(content)
     }
 
+    private func replaceMemoryImmediateSyncTask(
+        _ operation: @escaping @MainActor @Sendable () async -> Void
+    ) {
+        memoryImmediateSyncRevision &+= 1
+        let revision = memoryImmediateSyncRevision
+        let previousTask = memoryImmediateSyncTask
+        previousTask?.cancel()
+
+        memoryImmediateSyncTask = Task { @MainActor [weak self] in
+            // Joining the replaced task prevents a cancelled remote sync from
+            // becoming detached and writing SQLite after shutdown snapshots it.
+            await previousTask?.value
+            guard let self,
+                  !Task.isCancelled,
+                  self.memoryImmediateSyncRevision == revision else {
+                return
+            }
+            await operation()
+            guard self.memoryImmediateSyncRevision == revision else { return }
+            self.memoryImmediateSyncTask = nil
+        }
+    }
+
+    private func scheduleMemoryExtractionCycle() {
+        guard !terminationInProgress, memoryExtractionTask == nil else { return }
+        memoryExtractionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.runMemoryExtractionCycle()
+            self.memoryExtractionTask = nil
+        }
+    }
+
     /// Full extraction cycle: pulls recent turns, asks LLM to extract structured memories,
     /// dedups against existing local rows (by content_hash), inserts new ones, pushes to
     /// remote if configured, and refreshes the LLM context.
     private func runMemoryExtractionCycle() async {
+        guard !Task.isCancelled else { return }
         guard let ollamaService = self.ollamaService,
               let databaseManager = self.databaseManager else {
             return
@@ -2088,6 +2360,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let extracted = try await ollamaService.extractStructuredMemories(
                 from: recentTurns.map { (role: $0.role, content: $0.content) }
             )
+            guard !Task.isCancelled else { return }
             AppLogger.info("Memory extraction returned \(extracted.count) candidates")
             guard !extracted.isEmpty else {
                 await pushUnsyncedMemoriesToRemote()
@@ -2096,6 +2369,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             for memory in extracted {
+                guard !Task.isCancelled else { return }
                 let hash = Self.memoryContentHash(memory.content)
                 if (try? await databaseManager.memoryExists(contentHash: hash)) == true {
                     continue
@@ -2137,6 +2411,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             await pushUnsyncedMemoriesToRemote()
             await refreshMemoryContext()
+        } catch where Task.isCancelled {
+            return
         } catch {
             AppLogger.error("Memory extraction cycle failed: \(error.localizedDescription)")
             await pushUnsyncedMemoriesToRemote()
@@ -2523,71 +2799,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 .map(\.appKitFrame)
         }
         controller.onMoodChange = { [weak self] petId, petName, happiness, delta, level in
-            guard let databaseManager = self?.databaseManager else {
-                return
-            }
-
-            Task {
-                do {
-                    try await databaseManager.insertEvent(
-                        source: "moodChange",
-                        payload: try Self.encodeMoodChangePayload(
-                            MoodChangeEventPayload(
-                                petId: petId,
-                                petName: petName,
-                                happiness: happiness,
-                                delta: delta,
-                                level: level
-                            )
+            self?.enqueuePersistenceWrite("record mood change") { databaseManager in
+                try await databaseManager.insertEvent(
+                    source: "moodChange",
+                    payload: try Self.encodeMoodChangePayload(
+                        MoodChangeEventPayload(
+                            petId: petId,
+                            petName: petName,
+                            happiness: happiness,
+                            delta: delta,
+                            level: level
                         )
                     )
-                } catch {
-                    AppLogger.error("Failed to record mood change: \(error.localizedDescription)")
-                }
+                )
             }
         }
         controller.onBehaviorChange = { [weak self] petId, petName, state in
-            guard let databaseManager = self?.databaseManager else {
-                return
-            }
-
-            Task {
-                do {
-                    try await databaseManager.insertEvent(
-                        source: "petBehavior",
-                        payload: try Self.encodePetBehaviorPayload(
-                            PetBehaviorEventPayload(
-                                petId: petId,
-                                petName: petName,
-                                state: state
-                            )
+            self?.enqueuePersistenceWrite("record pet behavior") { databaseManager in
+                try await databaseManager.insertEvent(
+                    source: "petBehavior",
+                    payload: try Self.encodePetBehaviorPayload(
+                        PetBehaviorEventPayload(
+                            petId: petId,
+                            petName: petName,
+                            state: state
                         )
                     )
-                } catch {
-                    AppLogger.error("Failed to record pet behavior: \(error.localizedDescription)")
-                }
+                )
             }
         }
         controller.onPetClick = { [weak self] petId, petName, type in
-            guard let databaseManager = self?.databaseManager else {
-                return
-            }
-
-            Task {
-                do {
-                    try await databaseManager.insertEvent(
-                        source: "petClick",
-                        payload: try Self.encodePetClickPayload(
-                            PetClickEventPayload(
-                                petId: petId,
-                                petName: petName,
-                                type: type
-                            )
+            self?.enqueuePersistenceWrite("record pet click") { databaseManager in
+                try await databaseManager.insertEvent(
+                    source: "petClick",
+                    payload: try Self.encodePetClickPayload(
+                        PetClickEventPayload(
+                            petId: petId,
+                            petName: petName,
+                            type: type
                         )
                     )
-                } catch {
-                    AppLogger.error("Failed to record pet click: \(error.localizedDescription)")
-                }
+                )
             }
         }
         controller.behaviorWeightMultipliers = timeWeatherController.currentBehaviorMultipliers
@@ -3457,19 +3709,12 @@ private func requestAccessibilityPermission() {
 }
 
 private extension AppDelegate {
-    static func resolvedAIBackend(from rawValue: String) -> AIBackend {
-        AIBackend(rawValue: rawValue) ?? .ollama
+    static func storageByteText(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: max(0, bytes), countStyle: .file)
     }
 
-    static func inferredAIBackend(preferred: AIBackend, endpointValue: String) -> AIBackend {
-        let lowercased = endpointValue.lowercased()
-        if lowercased.contains("/v1/chat/completions") || lowercased.contains("/v1/models") {
-            return .openAICompatible
-        }
-        if lowercased.contains("/api/chat") || lowercased.contains("/api/tags") {
-            return .ollama
-        }
-        return preferred
+    static func resolvedAIBackend(from rawValue: String) -> AIBackend {
+        AIBackend(rawValue: rawValue) ?? .ollama
     }
 
     static func normalizedAIEndpoint(_ rawValue: String, fallback: String = "http://localhost:11434") -> String {
@@ -3483,19 +3728,6 @@ private extension AppDelegate {
         }
 
         return "http://\(trimmed)"
-    }
-
-    static func normalizedAIModel(_ rawValue: String, backend: AIBackend, previousBackend: AIBackend? = nil) -> String {
-        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            return backend.defaultModel
-        }
-
-        if let previousBackend, previousBackend != backend, trimmed == previousBackend.defaultModel {
-            return backend.defaultModel
-        }
-
-        return trimmed
     }
 
     static func normalizedMCPServersJSON(_ rawValue: String) -> String {

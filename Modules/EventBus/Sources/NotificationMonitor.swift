@@ -6,6 +6,7 @@ public final class NotificationMonitor: EventSource, @unchecked Sendable {
 
     private let notificationCenter: DistributedNotificationCenter
     private var observer: NSObjectProtocol?
+    private var publicationTracker: EventPublicationTracker?
 
     public init(notificationCenter: DistributedNotificationCenter = .default()) {
         self.notificationCenter = notificationCenter
@@ -16,6 +17,8 @@ public final class NotificationMonitor: EventSource, @unchecked Sendable {
             return
         }
 
+        let publicationTracker = EventPublicationTracker()
+        self.publicationTracker = publicationTracker
         observer = notificationCenter.addObserver(
             forName: nil,
             object: nil,
@@ -26,17 +29,18 @@ public final class NotificationMonitor: EventSource, @unchecked Sendable {
                 return
             }
 
-            Task {
-                await eventBus.publish(event)
-            }
+            publicationTracker.publish(event, to: eventBus)
         }
     }
 
     public func stop() async {
+        publicationTracker?.stopAccepting()
         if let observer {
             notificationCenter.removeObserver(observer)
             self.observer = nil
         }
+        await publicationTracker?.drain()
+        publicationTracker = nil
     }
 
     nonisolated private static func makeEvent(from notification: Notification) -> AppEvent? {

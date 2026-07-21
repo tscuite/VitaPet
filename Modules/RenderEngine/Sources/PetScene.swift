@@ -25,10 +25,11 @@ public final class PetScene: SKScene, @unchecked Sendable {
     private var renderingVisible = true
     private var staticRedrawCoordinator = StaticRedrawCoordinator()
     private var animationGeneration: UInt = 0
+    private var facingDirection: HorizontalDirection = .right
 
     public init(size: CGSize, manifest: SpriteManifest, resourceBundle: Bundle? = nil) {
         self.manifest = manifest
-        self.resourceBundle = resourceBundle ?? Bundle.module
+        self.resourceBundle = resourceBundle ?? RenderEngineResourceBundle.current
         self.petNode = SKSpriteNode(texture: nil, color: .clear, size: size)
         super.init(size: size)
 
@@ -155,16 +156,17 @@ public final class PetScene: SKScene, @unchecked Sendable {
     }
 
     private func playActionCombo(_ plan: ActionComboPlan) {
+        petNode.removeAction(forKey: animationKey)
+        petNode.removeAction(forKey: effectKey)
+        petNode.removeAction(forKey: cadenceKey)
+        resetNodeTransform()
+
         let segmentActions = plan.segments.compactMap { actionSegment(for: $0) }
         guard segmentActions.isEmpty == false else {
             playAnimation(for: .idle)
             return
         }
 
-        petNode.removeAction(forKey: animationKey)
-        petNode.removeAction(forKey: effectKey)
-        petNode.removeAction(forKey: cadenceKey)
-        resetNodeTransform()
         animationGeneration &+= 1
         let generation = animationGeneration
         setRenderWorkload(.continuous)
@@ -297,7 +299,8 @@ public final class PetScene: SKScene, @unchecked Sendable {
     }
 
     private func comboMotion(for state: AnimationState, duration: TimeInterval) -> SKAction? {
-        let baseX = petNode.xScale == 0 ? 1 : petNode.xScale
+        let baseline = SpriteScaleBaseline(xScale: petNode.xScale, yScale: petNode.yScale)
+        let baseX = baseline.xScale
         let direction = baseX < 0 ? -1.0 : 1.0
 
         switch state {
@@ -338,7 +341,10 @@ public final class PetScene: SKScene, @unchecked Sendable {
             return SKAction.rotate(byAngle: CGFloat(direction) * .pi * 2, duration: duration)
 
         case .somersault:
-            let flipCount = max(1, Int(round(duration / 0.55)))
+            let flipCount = max(
+                1,
+                Int(round(duration / ActionComboPlanner.somersaultPerFlipDuration))
+            )
             let flip = SKAction.group([
                 SKAction.rotate(byAngle: CGFloat(direction) * .pi * 2, duration: duration / Double(flipCount)),
                 SKAction.sequence([
@@ -411,9 +417,18 @@ public final class PetScene: SKScene, @unchecked Sendable {
 
         case .danceCombo, .boxingCombo, .partyCombo, .parkourCombo, .trainingCombo, .joySpinCombo:
             let pulse = SKAction.sequence([
-                SKAction.scale(to: 1.08, duration: duration * 0.35),
-                SKAction.scale(to: 0.96, duration: duration * 0.25),
-                SKAction.scale(to: 1.0, duration: duration * 0.40)
+                SKAction.group([
+                    SKAction.scaleX(to: baseline.x(multiplier: 1.08), duration: duration * 0.35),
+                    SKAction.scaleY(to: baseline.y(multiplier: 1.08), duration: duration * 0.35)
+                ]),
+                SKAction.group([
+                    SKAction.scaleX(to: baseline.x(multiplier: 0.96), duration: duration * 0.25),
+                    SKAction.scaleY(to: baseline.y(multiplier: 0.96), duration: duration * 0.25)
+                ]),
+                SKAction.group([
+                    SKAction.scaleX(to: baseline.x(multiplier: 1), duration: duration * 0.40),
+                    SKAction.scaleY(to: baseline.y(multiplier: 1), duration: duration * 0.40)
+                ])
             ])
             return pulse
 
@@ -423,6 +438,8 @@ public final class PetScene: SKScene, @unchecked Sendable {
     }
 
     private func visualEffect(for state: AnimationState) -> SKAction? {
+        let baseline = SpriteScaleBaseline(xScale: petNode.xScale, yScale: petNode.yScale)
+
         switch state {
         case .stretch:
             // Horizontal stretch: squash and stretch
@@ -528,12 +545,14 @@ public final class PetScene: SKScene, @unchecked Sendable {
             return SKAction.repeat(sniff, count: 3)
 
         case .tailWag:
-            let currentX = abs(petNode.xScale == 0 ? 1 : petNode.xScale)
             let wag = SKAction.sequence([
-                SKAction.scaleX(to: currentX * 1.04, duration: 0.08),
-                SKAction.scaleX(to: currentX * 0.96, duration: 0.08)
+                SKAction.scaleX(to: baseline.x(multiplier: 1.04), duration: 0.08),
+                SKAction.scaleX(to: baseline.x(multiplier: 0.96), duration: 0.08)
             ])
-            return SKAction.repeat(wag, count: 5)
+            return SKAction.sequence([
+                SKAction.repeat(wag, count: 5),
+                SKAction.scaleX(to: baseline.x(multiplier: 1), duration: 0)
+            ])
 
         case .pawTap:
             let tap = SKAction.sequence([
@@ -544,26 +563,32 @@ public final class PetScene: SKScene, @unchecked Sendable {
 
         case .pounce:
             let crouch = SKAction.group([
-                SKAction.scaleX(to: petNode.xScale * 1.08, duration: 0.10),
+                SKAction.scaleX(to: baseline.x(multiplier: 1.08), duration: 0.10),
                 SKAction.scaleY(to: 0.86, duration: 0.10)
             ])
             let leap = SKAction.group([
-                SKAction.scaleX(to: petNode.xScale * 0.94, duration: 0.16),
+                SKAction.scaleX(to: baseline.x(multiplier: 0.94), duration: 0.16),
                 SKAction.scaleY(to: 1.12, duration: 0.16),
                 SKAction.moveBy(x: 0, y: 8, duration: 0.16)
             ])
             let land = SKAction.group([
-                SKAction.scaleX(to: petNode.xScale, duration: 0.12),
+                SKAction.scaleX(to: baseline.x(multiplier: 1), duration: 0.12),
                 SKAction.scaleY(to: 1.0, duration: 0.12),
                 SKAction.moveBy(x: 0, y: -8, duration: 0.12)
             ])
             return SKAction.sequence([crouch, leap, land])
 
         case .crouch:
-            return SKAction.group([
-                SKAction.scaleX(to: petNode.xScale * 1.10, duration: 0.20),
-                SKAction.scaleY(to: 0.78, duration: 0.20),
-                SKAction.moveBy(x: 0, y: -4, duration: 0.20)
+            return SKAction.sequence([
+                SKAction.group([
+                    SKAction.scaleX(to: baseline.x(multiplier: 1.10), duration: 0.20),
+                    SKAction.scaleY(to: baseline.y(multiplier: 0.78), duration: 0.20),
+                    SKAction.moveBy(x: 0, y: -4, duration: 0.20)
+                ]),
+                SKAction.group([
+                    SKAction.scaleX(to: baseline.x(multiplier: 1), duration: 0),
+                    SKAction.scaleY(to: baseline.y(multiplier: 1), duration: 0)
+                ])
             ])
 
         case .crawl:
@@ -588,20 +613,26 @@ public final class PetScene: SKScene, @unchecked Sendable {
 
         case .beg, .nuzzle, .blush:
             let pulse = SKAction.sequence([
-                SKAction.scale(to: 1.06, duration: 0.16),
-                SKAction.scale(to: 1.0, duration: 0.16)
+                SKAction.group([
+                    SKAction.scaleX(to: baseline.x(multiplier: 1.06), duration: 0.16),
+                    SKAction.scaleY(to: baseline.y(multiplier: 1.06), duration: 0.16)
+                ]),
+                SKAction.group([
+                    SKAction.scaleX(to: baseline.x(multiplier: 1), duration: 0.16),
+                    SKAction.scaleY(to: baseline.y(multiplier: 1), duration: 0.16)
+                ])
             ])
             return SKAction.repeat(pulse, count: 2)
 
         case .surprised:
             return SKAction.sequence([
                 SKAction.group([
-                    SKAction.scaleX(to: petNode.xScale * 0.90, duration: 0.05),
+                    SKAction.scaleX(to: baseline.x(multiplier: 0.90), duration: 0.05),
                     SKAction.scaleY(to: 1.16, duration: 0.05),
                     SKAction.moveBy(x: 0, y: 5, duration: 0.05)
                 ]),
                 SKAction.group([
-                    SKAction.scaleX(to: petNode.xScale, duration: 0.12),
+                    SKAction.scaleX(to: baseline.x(multiplier: 1), duration: 0.12),
                     SKAction.scaleY(to: 1.0, duration: 0.12),
                     SKAction.moveBy(x: 0, y: -5, duration: 0.12)
                 ])
@@ -614,10 +645,16 @@ public final class PetScene: SKScene, @unchecked Sendable {
             ])
 
         case .melt:
-            return SKAction.group([
-                SKAction.scaleX(to: petNode.xScale * 1.18, duration: 0.35),
-                SKAction.scaleY(to: 0.70, duration: 0.35),
-                SKAction.moveBy(x: 0, y: -7, duration: 0.35)
+            return SKAction.sequence([
+                SKAction.group([
+                    SKAction.scaleX(to: baseline.x(multiplier: 1.18), duration: 0.35),
+                    SKAction.scaleY(to: baseline.y(multiplier: 0.70), duration: 0.35),
+                    SKAction.moveBy(x: 0, y: -7, duration: 0.35)
+                ]),
+                SKAction.group([
+                    SKAction.scaleX(to: baseline.x(multiplier: 1), duration: 0),
+                    SKAction.scaleY(to: baseline.y(multiplier: 1), duration: 0)
+                ])
             ])
 
         case .sing:
@@ -648,9 +685,18 @@ public final class PetScene: SKScene, @unchecked Sendable {
 
         case .sparkle:
             let sparkle = SKAction.sequence([
-                SKAction.scale(to: 1.10, duration: 0.10),
-                SKAction.scale(to: 0.96, duration: 0.10),
-                SKAction.scale(to: 1.0, duration: 0.08)
+                SKAction.group([
+                    SKAction.scaleX(to: baseline.x(multiplier: 1.10), duration: 0.10),
+                    SKAction.scaleY(to: baseline.y(multiplier: 1.10), duration: 0.10)
+                ]),
+                SKAction.group([
+                    SKAction.scaleX(to: baseline.x(multiplier: 0.96), duration: 0.10),
+                    SKAction.scaleY(to: baseline.y(multiplier: 0.96), duration: 0.10)
+                ]),
+                SKAction.group([
+                    SKAction.scaleX(to: baseline.x(multiplier: 1), duration: 0.08),
+                    SKAction.scaleY(to: baseline.y(multiplier: 1), duration: 0.08)
+                ])
             ])
             return SKAction.repeat(sparkle, count: 2)
 
@@ -662,8 +708,8 @@ public final class PetScene: SKScene, @unchecked Sendable {
 
         case .pawReach:
             return SKAction.sequence([
-                SKAction.scaleX(to: petNode.xScale * 1.08, duration: 0.16),
-                SKAction.scaleX(to: petNode.xScale, duration: 0.14)
+                SKAction.scaleX(to: baseline.x(multiplier: 1.08), duration: 0.16),
+                SKAction.scaleX(to: baseline.x(multiplier: 1), duration: 0.14)
             ])
 
         case .guardDuty:
@@ -679,8 +725,12 @@ public final class PetScene: SKScene, @unchecked Sendable {
     }
 
     private func resetNodeTransform() {
-        let currentXDirection: CGFloat = petNode.xScale < 0 ? -1 : 1
-        petNode.xScale = currentXDirection
+        switch facingDirection {
+        case .left:
+            petNode.xScale = -1
+        case .right:
+            petNode.xScale = 1
+        }
         petNode.yScale = 1
         petNode.zRotation = 0
         petNode.position = CGPoint(x: size.width / 2, y: size.height / 2)
@@ -688,7 +738,7 @@ public final class PetScene: SKScene, @unchecked Sendable {
 
     /// 翻跟头各阶段时长（秒），方便 PetWindowController 同步窗口平移。
     public static let somersaultPrepDuration: TimeInterval = 0.18 + 0.35
-    public static let somersaultPerFlipDuration: TimeInterval = 0.55
+    public static let somersaultPerFlipDuration = ActionComboPlanner.somersaultPerFlipDuration
     public static let somersaultSettleDuration: TimeInterval = 0.08 + 0.14
     /// 落地后到招手收势之间的停顿。
     public static let somersaultPrePunchPause: TimeInterval = 0.22
@@ -857,6 +907,7 @@ public final class PetScene: SKScene, @unchecked Sendable {
     }
 
     public func setFacing(_ direction: HorizontalDirection) {
+        facingDirection = direction
         let currentScale = abs(petNode.xScale == 0 ? 1 : petNode.xScale)
         petNode.xScale = direction == .left ? -currentScale : currentScale
         requestStaticRedrawIfNeeded()

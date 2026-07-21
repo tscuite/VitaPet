@@ -9,6 +9,8 @@ public actor WebhookServer: EventSource {
     private var eventBus: EventBus?
     private var isRunning = false
     private var listener: NWListener?
+    private var callbackTracker: EventPublicationTracker?
+    private var activeConnections: [ObjectIdentifier: NWConnection] = [:]
 
     public init(port: UInt16 = 19280, secret: String = "") {
         self.port = port
@@ -24,6 +26,7 @@ public actor WebhookServer: EventSource {
             let params = NWParameters.tcp
             let nwPort = NWEndpoint.Port(rawValue: port) ?? .init(integerLiteral: 19280)
             let listener = try NWListener(using: params, on: nwPort)
+            let callbackTracker = EventPublicationTracker()
 
             listener.newConnectionHandler = { [weak self] connection in
                 guard let self else {
@@ -31,8 +34,11 @@ public actor WebhookServer: EventSource {
                     return
                 }
 
-                Task {
+                let accepted = callbackTracker.submit {
                     await self.handleConnection(connection)
+                }
+                if !accepted {
+                    connection.cancel()
                 }
             }
 
@@ -43,6 +49,7 @@ public actor WebhookServer: EventSource {
             }
 
             self.listener = listener
+            self.callbackTracker = callbackTracker
             self.eventBus = eventBus
             isRunning = true
             listener.start(queue: .main)
@@ -56,42 +63,49 @@ public actor WebhookServer: EventSource {
 
     public func stop() async {
         isRunning = false
+        callbackTracker?.stopAccepting()
         listener?.cancel()
         listener = nil
+        activeConnections.values.forEach { $0.cancel() }
+        await callbackTracker?.drain()
+        callbackTracker = nil
+        activeConnections.removeAll()
         eventBus = nil
     }
 
     private func handleConnection(_ connection: NWConnection) async {
+        let identifier = ObjectIdentifier(connection)
+        activeConnections[identifier] = connection
+        defer {
+            activeConnections.removeValue(forKey: identifier)
+            connection.cancel()
+        }
         connection.start(queue: .main)
         await receiveRequest(on: connection, accumulatedData: Data())
     }
 
     private func receiveRequest(on connection: NWConnection, accumulatedData: Data) async {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
-            guard let self else {
-                connection.cancel()
-                return
-            }
-
-            if error != nil {
-                connection.cancel()
-                return
-            }
-
-            var buffer = accumulatedData
-            if let data {
+        var buffer = accumulatedData
+        while isRunning {
+            let result = await receiveChunk(on: connection)
+            guard result.error == nil else { return }
+            if let data = result.data {
                 buffer.append(data)
             }
 
-            if Self.requestIsComplete(buffer, isComplete: isComplete) {
-                Task {
-                    await self.processRequest(data: buffer, connection: connection)
-                }
+            if Self.requestIsComplete(buffer, isComplete: result.isComplete) {
+                await processRequest(data: buffer, connection: connection)
                 return
             }
+        }
+    }
 
-            Task {
-                await self.receiveRequest(on: connection, accumulatedData: buffer)
+    private func receiveChunk(
+        on connection: NWConnection
+    ) async -> (data: Data?, isComplete: Bool, error: NWError?) {
+        await withCheckedContinuation { continuation in
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, isComplete, error in
+                continuation.resume(returning: (data, isComplete, error))
             }
         }
     }

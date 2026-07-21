@@ -305,6 +305,52 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.messages.map(\.content), ["hello", "reply"])
     }
 
+    func testSwitchingConversationWhileStreaming_scopesPresentationToOriginMessage() async {
+        let replyStream = ControlledReplyStream()
+        let viewModel = ChatViewModel(
+            sendToAI: { _, _, _ in replyStream.stream },
+            getAIStatus: { .ready }
+        )
+        let first = ConversationThread(id: "c1", type: .single, participantIds: [], title: "First")
+        let secondMessage = ChatMessage(role: .assistant, content: "existing")
+        let second = ConversationThread(id: "c2", type: .single, participantIds: [], title: "Second")
+        viewModel.loadConversations([first, second])
+        viewModel.loadMessages(for: "c2", messages: [secondMessage])
+
+        viewModel.inputText = "hello"
+        viewModel.sendMessage()
+        await waitUntil {
+            viewModel.isStreaming && viewModel.messages.count == 2 && replyStream.isReady
+        }
+
+        guard let originMessageId = viewModel.messages.last?.id else {
+            XCTFail("Expected a streaming assistant message")
+            return
+        }
+        XCTAssertEqual(viewModel.activeStreamingConversationId, "c1")
+        XCTAssertEqual(viewModel.activeStreamingMessageId, originMessageId)
+        XCTAssertTrue(viewModel.isCurrentConversationStreaming)
+        XCTAssertTrue(viewModel.isStreaming(messageId: originMessageId, in: "c1"))
+
+        viewModel.selectConversation("c2")
+
+        XCTAssertTrue(viewModel.isStreaming, "the origin request should continue in the background")
+        XCTAssertEqual(viewModel.activeStreamingConversationId, "c1")
+        XCTAssertFalse(viewModel.isCurrentConversationStreaming)
+        XCTAssertFalse(viewModel.isStreaming(messageId: secondMessage.id, in: "c2"))
+
+        viewModel.selectConversation("c1")
+
+        XCTAssertTrue(viewModel.isCurrentConversationStreaming)
+        XCTAssertTrue(viewModel.isStreaming(messageId: originMessageId, in: "c1"))
+
+        viewModel.cancelStreaming()
+        await waitUntil { !viewModel.isStreaming && replyStream.isTerminated }
+        XCTAssertNil(viewModel.activeStreamingConversationId)
+        XCTAssertNil(viewModel.activeStreamingMessageId)
+        XCTAssertFalse(viewModel.isCurrentConversationStreaming)
+    }
+
     func testDeletingOriginConversationWhileStreaming_doesNotResurrectIt() async {
         let replyStream = ControlledReplyStream()
         let viewModel = ChatViewModel(
@@ -358,6 +404,36 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.messages.map(\.content), ["hello"])
     }
 
+    func testStopAcceptingWork_waitsForAcceptedSlashCommandAndRejectsLateInput() async {
+        let blocker = SlashCommandBlocker()
+        let viewModel = ChatViewModel()
+        viewModel.onSlashCommand = { _, _ in
+            await blocker.run()
+            return true
+        }
+        viewModel.inputText = "/remember accepted"
+        viewModel.sendMessage()
+        await blocker.waitUntilStarted()
+
+        let stopTask = Task { @MainActor in
+            await viewModel.stopAcceptingWorkAndWait()
+            await blocker.markStopReturned()
+        }
+        await Task.yield()
+
+        let countBeforeLateInput = viewModel.messages.count
+        viewModel.inputText = "/remember late"
+        viewModel.sendMessage()
+        let didStopBeforeRelease = await blocker.didStopReturn
+        XCTAssertFalse(didStopBeforeRelease)
+        XCTAssertEqual(viewModel.messages.count, countBeforeLateInput)
+
+        await blocker.release()
+        await stopTask.value
+        let didStopAfterRelease = await blocker.didStopReturn
+        XCTAssertTrue(didStopAfterRelease)
+    }
+
     func testInputText_defaultIsEmpty() {
         let viewModel = ChatViewModel()
 
@@ -395,6 +471,40 @@ final class ChatViewModelTests: XCTestCase {
             await Task.yield()
         }
         XCTAssertTrue(condition())
+    }
+}
+
+private actor SlashCommandBlocker {
+    private var started = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var didStopReturn = false
+
+    func run() async {
+        started = true
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+        await withCheckedContinuation { continuation in
+            releaseWaiters.append(continuation)
+        }
+    }
+
+    func waitUntilStarted() async {
+        if started { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+
+    func release() {
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    func markStopReturned() {
+        didStopReturn = true
     }
 }
 

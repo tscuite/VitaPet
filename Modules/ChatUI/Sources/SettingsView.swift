@@ -293,6 +293,8 @@ public struct SettingsView: View {
     @State private var settingsScope: SettingsScope = .initial
     @State private var settingsSearchText: String = ""
     @State private var pendingAIConfigSaveTask: Task<Void, Never>?
+    @State private var aiConfigIsDirty = false
+    @State private var aiConfigSaveError: String?
     @State private var pendingAIMemorySaveTask: Task<Void, Never>?
     @State private var pendingNotificationSaveTask: Task<Void, Never>?
     @State private var pendingPetSoundSaveTask: Task<Void, Never>?
@@ -310,7 +312,7 @@ public struct SettingsView: View {
     private let onTestConnection: @MainActor () -> Void
     private let onTestAIMemoryConnection: @MainActor () async -> String?
     private let onTestAIMemoryWrite: @MainActor () async -> String?
-    private let onSaveAIConfig: @MainActor (String, String, String, AIEngine.AIBackend, String, String) -> Void
+    private let onSaveAIConfig: @MainActor (String, String, String, AIEngine.AIBackend, String, String) -> String?
     private let onSaveAIMemoryConfig: @MainActor (Bool, String, String, String, String, String, String, Int) -> Void
     private let onSaveNotificationConfig: @MainActor (String, Bool, Int, String) -> Void
     private let onSaveChatAppearance: @MainActor (Bool, Double) -> Void
@@ -372,7 +374,7 @@ public struct SettingsView: View {
         onTestConnection: @escaping @MainActor () -> Void = {},
         onTestAIMemoryConnection: @escaping @MainActor () async -> String? = { nil },
         onTestAIMemoryWrite: @escaping @MainActor () async -> String? = { nil },
-        onSaveAIConfig: @escaping @MainActor (String, String, String, AIEngine.AIBackend, String, String) -> Void = { _, _, _, _, _, _ in },
+        onSaveAIConfig: @escaping @MainActor (String, String, String, AIEngine.AIBackend, String, String) -> String? = { _, _, _, _, _, _ in nil },
         onSaveAIMemoryConfig: @escaping @MainActor (Bool, String, String, String, String, String, String, Int) -> Void = { _, _, _, _, _, _, _, _ in },
         onSaveNotificationConfig: @escaping @MainActor (String, Bool, Int, String) -> Void = { _, _, _, _ in },
         onUpdatePet: @escaping @MainActor (UUID, String, String, Double, String, String, String, String) -> Void = { _, _, _, _, _, _, _, _ in },
@@ -1074,6 +1076,7 @@ public struct SettingsView: View {
                             .foregroundStyle(.secondary)
                         Spacer()
                         Button(L10n.settingsAITestConnection) {
+                            guard scheduleAIConfigSave(immediate: true) else { return }
                             liveAIStatus = .connecting
                             onTestConnection()
 
@@ -1092,16 +1095,19 @@ public struct SettingsView: View {
                         .buttonStyle(.bordered)
                     }
 
+                    if let aiConfigSaveError {
+                        Text("配置保存失败：\(aiConfigSaveError)")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+
                     Picker(L10n.settingsAIBackend, selection: $aiBackend) {
                         ForEach(AIEngine.AIBackend.allCases, id: \.self) { backend in
                             Text(aiBackendTitle(backend)).tag(backend)
                         }
                     }
-                    .onChange(of: aiBackend) { oldValue, newValue in
-                        let trimmedModel = ollamaModel.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if trimmedModel.isEmpty || trimmedModel == oldValue.defaultModel {
-                            ollamaModel = newValue.defaultModel
-                        }
+                    .onChange(of: aiBackend) { _, newValue in
+                        ollamaModel = AIModelSelection.resolvedModel(ollamaModel, for: newValue)
                         scheduleAIConfigSave(immediate: true)
                     }
 
@@ -1579,7 +1585,12 @@ public struct SettingsView: View {
             await pluginSettingsViewModel.refresh()
         }
         .onDisappear {
-            pendingAIConfigSaveTask?.cancel()
+            if aiConfigIsDirty {
+                scheduleAIConfigSave(immediate: true)
+            } else {
+                pendingAIConfigSaveTask?.cancel()
+                pendingAIConfigSaveTask = nil
+            }
             pendingAIMemorySaveTask?.cancel()
             pendingNotificationSaveTask?.cancel()
             pendingPetSoundSaveTask?.cancel()
@@ -1937,8 +1948,11 @@ public struct SettingsView: View {
         }
     }
 
-    private func scheduleAIConfigSave(immediate: Bool = false) {
+    @discardableResult
+    private func scheduleAIConfigSave(immediate: Bool = false) -> Bool {
         pendingAIConfigSaveTask?.cancel()
+        pendingAIConfigSaveTask = nil
+        aiConfigIsDirty = true
         let endpoint = ollamaEndpoint
         let model = ollamaModel
         let prompt = aiSystemPrompt
@@ -1947,19 +1961,27 @@ public struct SettingsView: View {
         let mcpJSON = mcpServersJSON
 
         let performSave = { [onSaveAIConfig] in
-            onSaveAIConfig(endpoint, model, prompt, backend, apiKey, mcpJSON)
+            let error = onSaveAIConfig(endpoint, model, prompt, backend, apiKey, mcpJSON)
+            pendingAIConfigSaveTask = nil
+            if let error {
+                aiConfigSaveError = error
+                return false
+            }
+            aiConfigSaveError = nil
+            aiConfigIsDirty = false
+            return true
         }
 
         guard !immediate else {
-            performSave()
-            return
+            return performSave()
         }
 
         pendingAIConfigSaveTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(280))
             guard !Task.isCancelled else { return }
-            performSave()
+            _ = performSave()
         }
+        return true
     }
 
     private func openMCPEditor() {
@@ -3325,15 +3347,34 @@ private struct StorageManagementSection: View {
     let onRefresh: () async -> String
     let onMaintain: () async -> String
     @State private var message: String?
+    @State private var isWorking = false
 
     var body: some View {
         Section("存储管理") {
             Text(summary).font(.caption).foregroundStyle(.secondary)
             if let message { Text(message).font(.caption).foregroundStyle(.secondary) }
             HStack {
-                Button("刷新") { Task { message = await onRefresh() } }
-                Button("立即整理") { Task { message = await onMaintain() } }
+                Button("刷新") {
+                    Task { @MainActor in
+                        guard !isWorking else { return }
+                        isWorking = true
+                        message = await onRefresh()
+                        isWorking = false
+                    }
+                }
+                Button("立即整理") {
+                    Task { @MainActor in
+                        guard !isWorking else { return }
+                        isWorking = true
+                        message = await onMaintain()
+                        isWorking = false
+                    }
+                }
+                if isWorking {
+                    ProgressView().controlSize(.small)
+                }
             }
+            .disabled(isWorking)
         }
     }
 }

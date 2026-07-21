@@ -1,6 +1,6 @@
 # AI Model Selection Stability Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Prevent VitaPet from silently replacing a non-empty configured AI model when the backend changes.
 
@@ -16,7 +16,7 @@
 - Create: `Modules/AIEngine/Tests/AIModelSelectionTests.swift`
 - Create temporarily: `.tmp/AIModelSelectionHarness.swift`
 
-- [ ] **Step 1: Write the failing regression test**
+- [x] **Step 1: Write the failing regression test**
 
 ```swift
 func testExplicitPreviousDefaultIsPreservedAcrossBackendChange() {
@@ -27,7 +27,7 @@ func testExplicitPreviousDefaultIsPreservedAcrossBackendChange() {
 }
 ```
 
-- [ ] **Step 2: Run the harness and verify RED**
+- [x] **Step 2: Run the harness and verify RED**
 
 Run: `swiftc Modules/AIEngine/Sources/AIEngine.swift .tmp/AIModelSelectionHarness.swift -o .tmp/ai-model-selection-harness`
 
@@ -39,7 +39,7 @@ Expected: compilation fails because `AIModelSelection` does not exist.
 - Modify: `Modules/AIEngine/Sources/AIEngine.swift`
 - Modify: `Modules/AIEngine/Sources/OllamaService.swift`
 
-- [ ] **Step 1: Add the minimal pure implementation**
+- [x] **Step 1: Add the minimal pure implementation**
 
 ```swift
 public enum AIModelSelection {
@@ -50,11 +50,11 @@ public enum AIModelSelection {
 }
 ```
 
-- [ ] **Step 2: Make request resolution call the shared policy**
+- [x] **Step 2: Make request resolution call the shared policy**
 
 Replace the private duplicate trimming/default logic in `OllamaService` with `AIModelSelection.resolvedModel(model, for: backend)`.
 
-- [ ] **Step 3: Run the harness and verify GREEN**
+- [x] **Step 3: Run the harness and verify GREEN**
 
 Run the same `swiftc` command and execute `.tmp/ai-model-selection-harness`.
 
@@ -66,7 +66,7 @@ Expected: `ai model selection harness: PASS`.
 - Modify: `Modules/ChatUI/Sources/SettingsView.swift`
 - Modify: `App/Sources/AppDelegate.swift`
 
-- [ ] **Step 1: Preserve the current non-empty model in Settings**
+- [x] **Step 1: Preserve the current non-empty model in Settings**
 
 ```swift
 .onChange(of: aiBackend) { _, newValue in
@@ -75,11 +75,11 @@ Expected: `ai model selection harness: PASS`.
 }
 ```
 
-- [ ] **Step 2: Use the same policy during startup and save**
+- [x] **Step 2: Use the same policy during startup and save**
 
 Replace `normalizedAIModel` and its `previousBackend` rewrite with `AIModelSelection.resolvedModel`.
 
-- [ ] **Step 3: Build and run focused regression checks**
+- [x] **Step 3: Build and run focused regression checks**
 
 Run the standalone harness and build `VitaPetApp` with the repository's SDK overlay command.
 
@@ -90,19 +90,19 @@ Expected: harness passes and the product builds without errors.
 **Files:**
 - Modify only files required by concrete high-severity review findings.
 
-- [ ] **Step 1: Review recent AI, storage, UI, and rendering changes**
+- [x] **Step 1: Review recent AI, storage, UI, and rendering changes**
 
 Record only reproducible correctness or safety issues; avoid unrelated refactors.
 
-- [ ] **Step 2: Add a failing test before each additional fix**
+- [x] **Step 2: Add a failing test before each additional fix**
 
 Use the relevant package test or a standalone deterministic harness when XCTest cannot be loaded by the installed Command Line Tools.
 
-- [ ] **Step 3: Run final verification**
+- [x] **Step 3: Run final verification**
 
 Run build, focused harnesses, `git diff --check`, and a sensitive-information scan.
 
-- [ ] **Step 4: Commit and push**
+- [x] **Step 4: Commit and push**
 
 ```bash
 git add Modules/AIEngine/Sources/AIEngine.swift \

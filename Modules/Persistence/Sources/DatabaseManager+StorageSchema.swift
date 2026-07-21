@@ -37,6 +37,7 @@ extension DatabaseManager {
             try Self.addLegacyColumnsIfNeeded(in: database)
             try Self.createStorageTables(in: database)
             try Self.addStorageColumnsIfNeeded(in: database)
+            try Self.initializeFileEventMigrationMetadata(in: database)
             try Self.createCoreIndexes(in: database)
 
             if isNewDatabase {
@@ -95,6 +96,63 @@ extension DatabaseManager {
                 )
             }
             throw error
+        }
+    }
+
+    public func currentStorageSchemaReadiness() throws -> StorageSchemaReadiness {
+        let database = try getOrOpenDatabase()
+        try Self.verifyCoreSchema(in: database)
+        let optimized = try Self.storageIndexMatches(
+            named: "idx_events_source_timestamp_id",
+            table: "events",
+            columns: ["source", "timestamp", "id"],
+            unique: false,
+            in: database
+        )
+        try Self.writeOptimizedIndexState(optimized ? "ready" : "deferred", in: database)
+        return Self.storageReadiness(optimized: optimized)
+    }
+
+    public func currentStorageFeatureGates() throws -> StorageFeatureGates {
+        let readiness = try currentStorageSchemaReadiness()
+        return StorageFeatureGates(
+            retentionEnabled: readiness.coreReady,
+            fullCompactionEnabled: readiness.optimized,
+            schedulerEnabled: readiness.optimized
+        )
+    }
+
+    func promoteOptimizedEventsIndexAfterBoundedMaintenance() throws -> StorageSchemaReadiness {
+        let database = try getOrOpenDatabase()
+        do {
+            try Self.storageExecute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_events_source_timestamp_id
+                ON events(source, timestamp, id);
+                """,
+                in: database
+            )
+            let optimized = try Self.storageIndexMatches(
+                named: "idx_events_source_timestamp_id",
+                table: "events",
+                columns: ["source", "timestamp", "id"],
+                unique: false,
+                in: database
+            )
+            guard optimized else {
+                throw StorageSchemaMigrationError.verificationFailed(
+                    "Optimized events index could not be verified after bounded maintenance."
+                )
+            }
+            try Self.writeOptimizedIndexState("ready", in: database)
+            return Self.storageReadiness(optimized: true)
+        } catch {
+            try? Self.writeOptimizedIndexState("deferred", in: database)
+            return StorageSchemaReadiness(
+                coreReady: true,
+                optimized: false,
+                degradedReason: "Optimized events index remains deferred: \(error.localizedDescription)"
+            )
         }
     }
 }
@@ -284,6 +342,81 @@ private extension DatabaseManager {
         )
     }
 
+    static func initializeFileEventMigrationMetadata(in database: OpaquePointer?) throws {
+        try storageExecute(
+            """
+            INSERT OR IGNORE INTO storage_metadata(key, value)
+            SELECT
+                'file_event_migration_high_watermark',
+                CAST(COALESCE(MAX(id), 0) AS TEXT)
+            FROM events
+            WHERE source = 'fileChanged';
+            """,
+            in: database
+        )
+
+        let watermark: Int64
+        do {
+            let statement = try storagePrepare(
+                """
+                SELECT value
+                FROM storage_metadata
+                WHERE key = 'file_event_migration_high_watermark';
+                """,
+                in: database
+            )
+            defer { sqlite3_finalize(statement) }
+            guard sqlite3_step(statement) == SQLITE_ROW,
+                  sqlite3_column_type(statement, 0) != SQLITE_NULL,
+                  let rawWatermark = sqlite3_column_text(statement, 0),
+                  let parsedWatermark = Int64(String(cString: rawWatermark)),
+                  parsedWatermark >= 0 else {
+                throw StorageSchemaMigrationError.verificationFailed(
+                    "File-event migration watermark is missing or invalid."
+                )
+            }
+            watermark = parsedWatermark
+        }
+
+        let hasPendingLegacyRows: Bool
+        do {
+            let statement = try storagePrepare(
+                """
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM events
+                    WHERE source = 'fileChanged'
+                      AND rollup_accounted = 0
+                      AND id <= ?
+                );
+                """,
+                in: database
+            )
+            defer { sqlite3_finalize(statement) }
+            guard sqlite3_bind_int64(statement, 1, watermark) == SQLITE_OK,
+                  sqlite3_step(statement) == SQLITE_ROW else {
+                throw storageSQLiteError(in: database)
+            }
+            hasPendingLegacyRows = sqlite3_column_int64(statement, 0) != 0
+        }
+
+        if !hasPendingLegacyRows {
+            try storageExecute(
+                """
+                INSERT INTO storage_metadata(key, value)
+                VALUES ('file_event_migration_complete', '1')
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+                """,
+                in: database
+            )
+        } else {
+            try storageExecute(
+                "DELETE FROM storage_metadata WHERE key = 'file_event_migration_complete';",
+                in: database
+            )
+        }
+    }
+
     static func createCoreIndexes(in database: OpaquePointer?) throws {
         try storageExecute(
             """
@@ -317,6 +450,16 @@ private extension DatabaseManager {
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw storageSQLiteError(in: database)
         }
+    }
+
+    static func storageReadiness(optimized: Bool) -> StorageSchemaReadiness {
+        StorageSchemaReadiness(
+            coreReady: true,
+            optimized: optimized,
+            degradedReason: optimized
+                ? nil
+                : "Optimized events index creation is deferred for this existing database."
+        )
     }
 
     static func addColumnIfNeeded(
