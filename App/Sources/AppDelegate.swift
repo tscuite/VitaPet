@@ -77,6 +77,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var bootstrapTask: Task<Void, Never>?
     private var terminationInProgress = false
 
+    /// Status line shown at the top of the 番茄钟 menu (phase + remaining time).
+    private func pomodoroStatusText() -> String {
+        let remaining = pomodoroController.remainingSeconds
+        let timeText = String(format: "%02d:%02d", remaining / 60, remaining % 60)
+        if pomodoroController.isPaused {
+            return "已暂停 · \(timeText)"
+        }
+        switch pomodoroController.state {
+        case .idle:
+            return remaining > 0 ? "已暂停 · \(timeText)" : "未开始"
+        case .working:
+            return "专注中 · \(timeText)"
+        case .breakTime:
+            return "休息中 · \(timeText)"
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         bootstrapTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -1634,6 +1651,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pomodoroMenuState: { [weak self] in
                 guard let self else {
                     return StatusBarController.PomodoroMenuState(
+                        statusText: "未开始",
                         startEnabled: true,
                         pauseTitle: "暂停",
                         pauseEnabled: false,
@@ -1645,6 +1663,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let isIdle = self.pomodoroController.state == .idle
                 let isPaused = self.pomodoroController.isPaused
                 return StatusBarController.PomodoroMenuState(
+                    statusText: self.pomodoroStatusText(),
                     startEnabled: isIdle,
                     pauseTitle: isPaused ? "继续" : "暂停",
                     pauseEnabled: !isIdle,

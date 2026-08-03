@@ -127,7 +127,8 @@ public final class PetScene: SKScene, @unchecked Sendable {
             petNode.run(effect, withKey: effectKey)
         }
 
-        let shouldScheduleCadenceChange = !repeats || effect != nil
+        // idle 的呼吸是 repeatForever，必须保持渲染；不能在"播完"后降级到静态帧暂停。
+        let shouldScheduleCadenceChange = state != .idle && (!repeats || effect != nil)
         if shouldScheduleCadenceChange {
             let animationDuration = repeats ? 0 : animation.duration
             let effectDuration = effect?.duration ?? 0
@@ -441,6 +442,14 @@ public final class PetScene: SKScene, @unchecked Sendable {
         let baseline = SpriteScaleBaseline(xScale: petNode.xScale, yScale: petNode.yScale)
 
         switch state {
+        case .idle:
+            // 持续呼吸：单帧 idle 也有生命力。只缩放 Y 以保留朝向（xScale 符号）。
+            let breathe = SKAction.sequence([
+                SKAction.scaleY(to: 1.06, duration: 1.6),
+                SKAction.scaleY(to: 0.98, duration: 1.6)
+            ])
+            return SKAction.repeatForever(breathe)
+
         case .stretch:
             // Horizontal stretch: squash and stretch
             let stretchOut = SKAction.scaleX(to: 1.3, duration: 0.4)
@@ -654,6 +663,26 @@ public final class PetScene: SKScene, @unchecked Sendable {
                 SKAction.group([
                     SKAction.scaleX(to: baseline.x(multiplier: 1), duration: 0),
                     SKAction.scaleY(to: baseline.y(multiplier: 1), duration: 0)
+                ])
+            ])
+
+        case .wave:
+            // 招手：单帧 wave 资源原本静止。用小幅倾斜 + 轻微上下弹动模拟挥手的自然节奏，
+            // 避免整体大角度旋转显得僵硬难看。
+            let sway = SKAction.sequence([
+                SKAction.rotate(toAngle: .pi / 45, duration: 0.22, shortestUnitArc: true),   // ~4°
+                SKAction.rotate(toAngle: -.pi / 45, duration: 0.22, shortestUnitArc: true)
+            ])
+            let bob = SKAction.sequence([
+                SKAction.scaleY(to: 1.04, duration: 0.22),
+                SKAction.scaleY(to: 1.0, duration: 0.22)
+            ])
+            let wave = SKAction.group([sway, bob])
+            return SKAction.sequence([
+                SKAction.repeat(wave, count: 4),
+                SKAction.group([
+                    SKAction.rotate(toAngle: 0, duration: 0.12, shortestUnitArc: true),
+                    SKAction.scaleY(to: 1.0, duration: 0.12)
                 ])
             ])
 

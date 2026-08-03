@@ -6,6 +6,7 @@ import RenderEngine
 @MainActor
 final class StatusBarController: NSObject, NSMenuDelegate {
     struct PomodoroMenuState {
+        let statusText: String
         let startEnabled: Bool
         let pauseTitle: String
         let pauseEnabled: Bool
@@ -66,6 +67,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         listPets: @escaping @MainActor () -> [(id: UUID, name: String)],
         pomodoroMenuState: @escaping @MainActor () -> PomodoroMenuState = {
             PomodoroMenuState(
+                statusText: "未开始",
                 startEnabled: true,
                 pauseTitle: "暂停",
                 pauseEnabled: false,
@@ -267,13 +269,20 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     private func makePomodoroMenu() -> NSMenu {
-        let menu = NSMenu(title: "🍅 番茄钟")
+        let menu = NSMenu(title: "番茄钟")
+
+        // Read-only header that reflects the current timer phase + remaining time.
+        let statusHeader = NSMenuItem(title: "未开始", action: nil, keyEquivalent: "")
+        statusHeader.isEnabled = false
+        menu.addItem(statusHeader)
+
         menu.addItem(NSMenuItem(title: "开始", action: #selector(startPomodoro), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "暂停", action: #selector(pauseOrResumePomodoro), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "重置", action: #selector(resetPomodoro), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "跳过", action: #selector(skipPomodoro), keyEquivalent: ""))
 
-        for item in menu.items {
+        // The status header has no action; wire targets only on the action items.
+        for item in menu.items where item.action != nil {
             item.target = self
         }
 
@@ -290,11 +299,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         }
 
         let state = pomodoroMenuState()
-        submenu.items[safe: 0]?.isEnabled = state.startEnabled
-        submenu.items[safe: 1]?.title = state.pauseTitle
-        submenu.items[safe: 1]?.isEnabled = state.pauseEnabled
-        submenu.items[safe: 2]?.isEnabled = state.resetEnabled
-        submenu.items[safe: 3]?.isEnabled = state.skipEnabled
+        submenu.items[safe: 0]?.title = state.statusText
+        submenu.items[safe: 1]?.isEnabled = state.startEnabled
+        submenu.items[safe: 2]?.title = state.pauseTitle
+        submenu.items[safe: 2]?.isEnabled = state.pauseEnabled
+        submenu.items[safe: 3]?.isEnabled = state.resetEnabled
+        submenu.items[safe: 4]?.isEnabled = state.skipEnabled
     }
 
     func refreshMoodTooltip() {

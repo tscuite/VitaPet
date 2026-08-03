@@ -452,12 +452,20 @@ public final class PetWindowController: NSWindowController {
             singleClickWorkItem = nil
         }
         cancelAutonomousMovement()
+        // Always resume rendering on any click so that paused SKAction processing wakes up
+        // and the upcoming drag/react animation can actually play.
+        petScene.resumeRendering()
         dragStartMouseLocation = NSEvent.mouseLocation
         dragStartWindowOrigin = window.frame.origin
         hasDragged = false
         recentDragPositions = []
 
         guard shouldStartDragAnimation else {
+            return
+        }
+
+        // 双击连招播放期间不触发 drag_start，否则 applyAnimation 的 removeAction 会打断正在播放的 combo。
+        guard Date() >= animationLockUntil else {
             return
         }
 
@@ -591,9 +599,18 @@ public final class PetWindowController: NSWindowController {
 
     private func triggerReact() {
         Task {
-            if let state = await stateMachine.handleTrigger(.userInteract, mood: await petMood.level) {
+            let currentState = await stateMachine.currentState
+            let nextState = await stateMachine.handleTrigger(.userInteract, mood: await petMood.level)
+            if let state = nextState {
                 await MainActor.run {
                     self.applyAnimation(state, forceState: false)
+                    self.updatePetScale(for: self.petScene.size)
+                }
+            } else if currentState == .react {
+                // State machine de-duplicates react→react. Replay the reaction so the click still
+                // produces visible feedback after rendering has been woken up by mouseDown.
+                await MainActor.run {
+                    self.applyAnimation(.react, forceState: false)
                     self.updatePetScale(for: self.petScene.size)
                 }
             }
@@ -618,9 +635,10 @@ public final class PetWindowController: NSWindowController {
 
     private func triggerDoubleClickAction(_ interaction: InteractionTextAction) {
         let state = interaction.state
+        let hasCombo = ActionComboPlanner.plan(for: state) != nil
         Task { await stateMachine.forceState(state) }
 
-        if ActionComboPlanner.plan(for: state) != nil {
+        if hasCombo {
             executeActionCombo(state, count: interaction.count, forceState: false)
         } else {
             applyAnimation(state, forceState: false)

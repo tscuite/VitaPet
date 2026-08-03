@@ -290,7 +290,8 @@ public struct SettingsView: View {
     @State private var editingPluginID: String?
     @State private var showPluginDeleteConfirm = false
     @State private var pendingPluginDeleteID: String?
-    @State private var settingsScope: SettingsScope = .initial
+    // Persisted so reopening 设置 returns to the last-edited category.
+    @AppStorage("settings.scope") private var settingsScope: SettingsScope = .initial
     @State private var settingsSearchText: String = ""
     @State private var pendingAIConfigSaveTask: Task<Void, Never>?
     @State private var aiConfigIsDirty = false
@@ -505,27 +506,39 @@ public struct SettingsView: View {
     }
 
     public var body: some View {
-        NavigationStack {
+        NavigationSplitView {
+            settingsSidebar
+        } detail: {
             settingsList
         }
+        .frame(minWidth: 720, minHeight: 560)
+    }
+
+    private var settingsSidebar: some View {
+        List(selection: $settingsScope) {
+            Section {
+                ForEach(SettingsScope.allCases) { scope in
+                    Label(scope.title, systemImage: scope.symbolName)
+                        .tag(scope)
+                }
+            } header: {
+                Text("模块")
+            }
+        }
+        .listStyle(.sidebar)
+        .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
     }
 
     private var settingsList: some View {
         let searchResults = settingsSearchResults
 
         return List {
-            StorageManagementSection(
-                summary: storageSummary(),
-                onRefresh: onRefreshStorage,
-                onMaintain: onMaintainStorage
-            )
-            Section("显示范围") {
-                Picker("模块", selection: $settingsScope) {
-                    ForEach(SettingsScope.allCases) { scope in
-                        Text(scope.title).tag(scope)
-                    }
-                }
-                .pickerStyle(.menu)
+            if settingsScope == .all {
+                StorageManagementSection(
+                    summary: storageSummary(),
+                    onRefresh: onRefreshStorage,
+                    onMaintain: onMaintainStorage
+                )
             }
 
             // ─── 宠物核心 ───

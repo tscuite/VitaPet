@@ -18,10 +18,12 @@ enum RenderCadencePlanner {
         scenePaused: true,
         viewPaused: true
     )
+    // 静态帧不再暂停渲染（曾导致单帧状态/单帧精灵卡死后点击无反应），
+    // 只降到 15fps 省电；effect 与状态切换仍能立即生效。
     private static let staticCadence = RenderCadence(
-        framesPerSecond: 5,
-        scenePaused: true,
-        viewPaused: true
+        framesPerSecond: 15,
+        scenePaused: false,
+        viewPaused: false
     )
 
     static func cadence(for workload: RenderWorkload, isVisible: Bool) -> RenderCadence {

@@ -25,6 +25,20 @@ enum SettingsScope: String, CaseIterable, Identifiable {
         }
     }
 
+    /// SF Symbol used for the sidebar entry and the scope picker.
+    var symbolName: String {
+        switch self {
+        case .all: return "square.grid.2x2"
+        case .pet: return "pawprint.fill"
+        case .sprite: return "paintpalette"
+        case .awareness: return "eye"
+        case .ai: return "sparkles"
+        case .notifications: return "bell.fill"
+        case .plugins: return "puzzlepiece.extension"
+        case .capability: return "lock.shield"
+        }
+    }
+
     func includes(_ section: SettingsScope) -> Bool {
         self == .all || self == section
     }
