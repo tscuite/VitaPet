@@ -556,16 +556,12 @@ public struct SettingsView: View {
                     if editingPetID == pet.id {
                         VStack(alignment: .leading, spacing: 12) {
                             collapsibleSection("基础属性", icon: "slider.horizontal.3", isExpanded: $editBasicExpanded) {
-                                HStack {
-                                    Text(L10n.settingsPetManagementName)
-                                        .frame(width: 50, alignment: .leading)
+                                formRow(L10n.settingsPetManagementName) {
                                     TextField("", text: $editName)
                                         .textFieldStyle(.roundedBorder)
                                 }
 
-                                HStack {
-                                    Text(L10n.settingsPetManagementAppearance)
-                                        .frame(width: 50, alignment: .leading)
+                                formRow(L10n.settingsPetManagementAppearance) {
                                     Picker("", selection: $editSpritePack) {
                                         ForEach(spritePackItems) { item in
                                             Text(item.name).tag(item.id)
@@ -574,9 +570,7 @@ public struct SettingsView: View {
                                     .labelsHidden()
                                 }
 
-                                HStack {
-                                    Text(L10n.settingsPetManagementSize)
-                                        .frame(width: 50, alignment: .leading)
+                                formRow(L10n.settingsPetManagementSize) {
                                     Slider(value: $editSize, in: 48...128, step: 8)
                                     Text("\(Int(editSize))pt")
                                         .font(.caption)
@@ -584,9 +578,7 @@ public struct SettingsView: View {
                                         .frame(width: 40)
                                 }
 
-                                HStack {
-                                    Text(L10n.settingsPetManagementGender)
-                                        .frame(width: 50, alignment: .leading)
+                                formRow(L10n.settingsPetManagementGender) {
                                     Picker("", selection: $editGender) {
                                         Text(L10n.settingsPetManagementGenderNeutral).tag("neutral")
                                         Text(L10n.settingsPetManagementGenderMale).tag("male")
@@ -596,23 +588,17 @@ public struct SettingsView: View {
                                     .pickerStyle(.segmented)
                                 }
 
-                                HStack {
-                                    Text(L10n.settingsPetManagementAge)
-                                        .frame(width: 50, alignment: .leading)
+                                formRow(L10n.settingsPetManagementAge) {
                                     TextField(L10n.settingsPetManagementAgePlaceholder, text: $editAge)
                                         .textFieldStyle(.roundedBorder)
                                 }
 
-                                HStack {
-                                    Text(L10n.settingsPetManagementPersonality)
-                                        .frame(width: 50, alignment: .leading)
+                                formRow(L10n.settingsPetManagementPersonality) {
                                     TextField(L10n.settingsPetManagementPersonalityPlaceholder, text: $editPersonality)
                                         .textFieldStyle(.roundedBorder)
                                 }
 
-                                HStack {
-                                    Text(L10n.settingsPetManagementHobbies)
-                                        .frame(width: 50, alignment: .leading)
+                                formRow(L10n.settingsPetManagementHobbies) {
                                     TextField(L10n.settingsPetManagementHobbiesPlaceholder, text: $editHobbies)
                                         .textFieldStyle(.roundedBorder)
                                 }
@@ -651,9 +637,7 @@ public struct SettingsView: View {
                                             schedulePetSoundSave(for: pet.id, immediate: true)
                                         }
 
-                                    HStack {
-                                        Text("音量")
-                                            .frame(width: 50, alignment: .leading)
+                                    formRow("音量") {
                                         Slider(value: $editSoundVolume, in: 0...1)
                                             .disabled(!editSoundEnabled)
                                             .onChange(of: editSoundVolume) { _, _ in
@@ -738,7 +722,11 @@ public struct SettingsView: View {
                                     previewSize: 40
                                 )
                                 .frame(width: 40, height: 40)
-                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                                )
 
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(pet.name)
@@ -757,18 +745,32 @@ public struct SettingsView: View {
                                         showRemoveConfirm = true
                                     } label: {
                                         Image(systemName: "trash")
-                                            .foregroundStyle(.red)
+                                            .font(.system(size: 13, weight: .medium))
+                                            .foregroundStyle(.red.opacity(0.85))
+                                            .frame(width: 24, height: 24)
+                                            .background(Color.red.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
                                     }
-                                    .buttonStyle(.borderless)
+                                    .buttonStyle(.plain)
                                 }
 
                                 Image(systemName: "chevron.right")
                                     .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.tertiary)
                             }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(Color.primary.opacity(0.035))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                            )
+                            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         }
                         .buttonStyle(.plain)
-                        .padding(.vertical, 4)
+                        .padding(.vertical, 3)
                     }
                 }
 
@@ -2143,6 +2145,24 @@ public struct SettingsView: View {
             try? await Task.sleep(for: .milliseconds(280))
             guard !Task.isCancelled else { return }
             performSave()
+        }
+    }
+
+    /// 宠物编辑表单里标签列的统一宽度，让「名字 / 外观 / 体型 …」一列对齐。
+    private static let petFormLabelWidth: CGFloat = 60
+
+    /// 表单行：左侧统一宽度的次要色标签 + 右侧控件，取代散落的 `Text(...).frame(width: 50)`。
+    @ViewBuilder
+    private func formRow<Content: View>(
+        _ label: String,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        HStack(spacing: 12) {
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(width: Self.petFormLabelWidth, alignment: .leading)
+            content()
         }
     }
 

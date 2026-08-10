@@ -49,6 +49,7 @@ actor MCPClient {
     private var stderrTask: Task<Void, Never>?
     private var nextRequestID = 1
     private var pendingRequests: [Int: CheckedContinuation<JSONValue, Error>] = [:]
+    private var pendingTimeoutTasks: [Int: Task<Void, Never>] = [:]
     private var cachedTools: [ToolDescriptor]?
     private var initialized = false
     private var httpSessionID: String?
@@ -429,7 +430,7 @@ actor MCPClient {
                         OutgoingRequest(id: requestID, method: method, params: params)
                     )
 
-                    Task { [self] in
+                    pendingTimeoutTasks[requestID] = Task { [self] in
                         try? await Task.sleep(for: Self.requestTimeout)
                         timeoutRequest(id: requestID, method: method)
                     }
@@ -616,6 +617,8 @@ actor MCPClient {
             return
         }
 
+        pendingTimeoutTasks.removeValue(forKey: requestID)?.cancel()
+
         if let error = envelope.error {
             continuation.resume(throwing: MCPClientError.protocolError(code: error.code, message: error.message))
             return
@@ -625,6 +628,7 @@ actor MCPClient {
     }
 
     private func timeoutRequest(id: Int, method: String) {
+        pendingTimeoutTasks.removeValue(forKey: id)
         guard let continuation = pendingRequests.removeValue(forKey: id) else {
             return
         }
@@ -632,6 +636,7 @@ actor MCPClient {
     }
 
     private func cancelRequest(id: Int) {
+        pendingTimeoutTasks.removeValue(forKey: id)?.cancel()
         guard let continuation = pendingRequests.removeValue(forKey: id) else {
             return
         }
@@ -658,6 +663,11 @@ actor MCPClient {
     private func resumeAllPending(with error: Error) {
         let continuations = pendingRequests.values
         pendingRequests.removeAll()
+        let timeoutTasks = pendingTimeoutTasks.values
+        pendingTimeoutTasks.removeAll()
+        for task in timeoutTasks {
+            task.cancel()
+        }
         for continuation in continuations {
             continuation.resume(throwing: error)
         }

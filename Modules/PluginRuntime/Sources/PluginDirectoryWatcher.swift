@@ -95,6 +95,10 @@ final class PluginDirectoryWatcher: @unchecked Sendable {
         FSEventStreamStart(stream)
     }
 
+    /// 停止监听并释放回调上下文。
+    ///
+    /// 注意：本方法**不得在 watcher 的回调队列 `queue` 上调用** —— 否则内部的
+    /// `queue.sync {}` 屏障会死锁。当前唯一调用方 `PluginManager.stop()` 在主线程触发，安全。
     func stop() {
         guard let streamRef else {
             releaseContextIfNeeded()
@@ -105,6 +109,9 @@ final class PluginDirectoryWatcher: @unchecked Sendable {
         FSEventStreamInvalidate(streamRef)
         FSEventStreamRelease(streamRef)
         self.streamRef = nil
+        // 回调在 queue 上执行并用 takeUnretainedValue 读 context；
+        // 先排空队列，确保没有在跑的回调再释放 context，避免 use-after-free。
+        queue.sync {}
         releaseContextIfNeeded()
     }
 

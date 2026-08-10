@@ -7,10 +7,12 @@ struct DetectedWindow {
     let windowNumber: Int
 
     var appKitFrame: CGRect {
-        let screenHeight = NSScreen.main?.frame.height ?? 0
+        // CGWindowList 的坐标原点在「主屏」（screens.first，带 menu bar 那块）左上角。
+        // 多显示器时必须用主屏高度做翻转；NSScreen.main 是 key window 所在屏，会算错。
+        let primaryScreenHeight = NSScreen.screens.first?.frame.height ?? 0
         return CGRect(
             x: frame.origin.x,
-            y: screenHeight - frame.origin.y - frame.height,
+            y: primaryScreenHeight - frame.origin.y - frame.height,
             width: frame.width,
             height: frame.height
         )

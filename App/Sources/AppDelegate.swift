@@ -25,6 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var inputBarController: InputBarWindowController!
     private let eventBus = EventBus()
     private var timerSource: TimerSource!
+    /// 串行化 mini-game 对 timerSource 的 stop/start，避免快速开关时两个 Task 乱序导致空闲行为永久停止。
+    private var timerSourceToggleTask: Task<Void, Never>?
     private var hourBoundaryTimer: HourBoundaryTimerSource!
     private var workspaceMonitor: WorkspaceMonitor!
     private var notificationMonitor: NotificationMonitor!
@@ -1640,6 +1642,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             togglePetVisibility: { [weak self] in self?.togglePetVisibility() },
             currentPetSize: { [weak self] in self?.currentGlobalPetSize ?? 96 },
             currentMoodLevel: { [weak self] in self?.primaryPetController?.currentMoodLevel ?? .normal },
+            currentHappiness: { [weak self] in self?.primaryPetController?.currentHappiness ?? 50 },
             resizePets: { [weak self] size in self?.resizePets(to: size) },
             canAddPet: { [weak self] in (self?.petWindowControllers.count ?? 0) < (self?.maximumPets ?? 5) },
             addPet: { [weak self] in self?.addPet() },
@@ -1859,7 +1862,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         requestAccessibilityPermission()
         keyboardMonitor = KeyboardMonitor()
         if configManager.config.webhookEnabled {
-            webhookServer = WebhookServer(port: UInt16(configManager.config.webhookPort), secret: configManager.config.webhookSecret)
+            // 配置值可能越界（用户手填或手改 plist），UInt16(Int) 对 <0 / >65535 会 trap。
+            let webhookPort = UInt16(clamping: configManager.config.webhookPort)
+            webhookServer = WebhookServer(port: webhookPort, secret: configManager.config.webhookSecret)
         }
 
         eventSubscriptionID = await eventBus.subscribe { [weak self] event in
@@ -3091,9 +3096,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setMiniGameSystemsPaused(_ paused: Bool) {
         if paused {
             desktopAwareness.clearDesktopBehavior()
-            Task {
-                await self.timerSource?.stop()
-            }
+            enqueueTimerSourceToggle(stopOnly: true)
             return
         }
 
@@ -3102,10 +3105,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.transitionToState("idle")
         }
 
-        Task {
-            guard let timerSource = self.timerSource else { return }
+        enqueueTimerSourceToggle(stopOnly: false)
+    }
+
+    /// 把对 timerSource 的 stop/start 链接到上一个 toggle 之后执行，保证顺序。
+    private func enqueueTimerSourceToggle(stopOnly: Bool) {
+        let previous = timerSourceToggleTask
+        timerSourceToggleTask = Task { [weak self] in
+            await previous?.value
+            guard let self, let timerSource = self.timerSource else { return }
             await timerSource.stop()
-            await timerSource.start(publishingTo: self.eventBus)
+            if !stopOnly {
+                await timerSource.start(publishingTo: self.eventBus)
+            }
         }
     }
 

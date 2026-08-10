@@ -190,7 +190,9 @@ public final class ConfigManager {
             aiProactiveInterval = try container.decodeIfPresent(Int.self, forKey: .aiProactiveInterval) ?? 45
             githubToken = try container.decodeIfPresent(String.self, forKey: .githubToken) ?? ""
             webhookEnabled = try container.decodeIfPresent(Bool.self, forKey: .webhookEnabled) ?? false
-            webhookPort = try container.decodeIfPresent(Int.self, forKey: .webhookPort) ?? 19280
+            // 端口必须在 1...65535，否则启动时 UInt16(...) 会 trap；越界时回退到默认端口。
+            let decodedWebhookPort = try container.decodeIfPresent(Int.self, forKey: .webhookPort) ?? 19280
+            webhookPort = (1...65535).contains(decodedWebhookPort) ? decodedWebhookPort : 19280
             webhookSecret = try container.decodeIfPresent(String.self, forKey: .webhookSecret) ?? ""
             chatWindowTranslucencyEnabled = try container.decodeIfPresent(
                 Bool.self,

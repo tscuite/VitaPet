@@ -99,8 +99,8 @@ public enum JSONValue: Codable, Sendable, Equatable {
         case .string(let value):
             try container.encode(value)
         case .number(let value):
-            if value.rounded(.towardZero) == value {
-                try container.encode(Int(value))
+            if let intValue = Self.exactInt(value) {
+                try container.encode(intValue)
             } else {
                 try container.encode(value)
             }
@@ -115,13 +115,20 @@ public enum JSONValue: Codable, Sendable, Equatable {
         }
     }
 
+    /// Returns an `Int` only when `value` is finite, integral, and within `Int` range —
+    /// otherwise `Int(value)` would trap on huge/NaN doubles coming from external JSON.
+    /// 用 `Int(exactly:)` 一步判定：非整型 / 越界（含恰好 2^63）/ NaN / Inf 都返回 nil，不会 trap。
+    static func exactInt(_ value: Double) -> Int? {
+        Int(exactly: value)
+    }
+
     public var stringValue: String? {
         switch self {
         case .string(let value):
             return value
         case .number(let value):
-            if value.rounded(.towardZero) == value {
-                return String(Int(value))
+            if let intValue = Self.exactInt(value) {
+                return String(intValue)
             }
             return String(value)
         case .bool(let value):
@@ -134,8 +141,7 @@ public enum JSONValue: Codable, Sendable, Equatable {
     public var intValue: Int? {
         switch self {
         case .number(let value):
-            guard value.rounded(.towardZero) == value else { return nil }
-            return Int(value)
+            return Self.exactInt(value)
         case .string(let value):
             return Int(value)
         case .bool, .object, .array, .null:
@@ -226,8 +232,8 @@ public enum JSONValue: Codable, Sendable, Equatable {
         case .string(let value):
             return value
         case .number(let value):
-            if value.rounded(.towardZero) == value {
-                return Int(value)
+            if let intValue = Self.exactInt(value) {
+                return intValue
             }
             return value
         case .bool(let value):

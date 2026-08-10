@@ -85,7 +85,8 @@ final class DesktopAwarenessController {
         guard let controllers = getPetControllers?(), !controllers.isEmpty else { return }
 
         for controller in controllers {
-            controller.debugPlayAnimation("react")
+            // 线上路径不弹「🐛 anim:」调试气泡
+            controller.debugPlayAnimation("react", showDebugBubble: false)
         }
 
         let workItem = DispatchWorkItem { [weak self] in

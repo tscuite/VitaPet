@@ -19,6 +19,10 @@ public enum L10n {
     public static var menuQuit: String { tr("menu.quit") }
     public static var menuAddPet: String { tr("menu.add_pet") }
     public static var menuRemovePet: String { tr("menu.remove_pet") }
+    public static var menuFeedPet: String { tr("menu.feed_pet") }
+    public static var menuPlayWithPet: String { tr("menu.play_with_pet") }
+    public static var menuPatPet: String { tr("menu.pat_pet") }
+    public static var menuPetMood: String { tr("menu.pet_mood") }
 
     public static var bubbleTexts: [String] { trs("bubble.texts") }
     public static var bubbleDoubleClickTexts: [String] { trs("bubble.double_click_texts") }
@@ -154,6 +158,16 @@ public enum L10n {
     public static var petInteractionChaseStart: String { tr("pet.interaction.chase_start") }
     public static var petInteractionChaseCaught: String { tr("pet.interaction.chase_caught") }
     public static var petInteractionDance: String { tr("pet.interaction.dance") }
+
+    public static var petContextFeed: String { tr("pet.context.feed") }
+    public static var petContextPlay: String { tr("pet.context.play") }
+    public static var petContextPat: String { tr("pet.context.pat") }
+    public static var petHoverTexts: [String] { trs("pet.hover") }
+    public static var petDragLongTexts: [String] { trs("pet.drag.long") }
+    public static var petDragThrowTexts: [String] { trs("pet.drag.throw") }
+    public static var petAmbientHappy: [String] { trs("pet.ambient.happy") }
+    public static var petAmbientNormal: [String] { trs("pet.ambient.normal") }
+    public static var petAmbientSad: [String] { trs("pet.ambient.sad") }
 
     public static func tr(_ key: String) -> String {
         guard let value = storage.value(for: key, locale: locale) as? String else {

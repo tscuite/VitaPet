@@ -78,6 +78,12 @@ public struct BehaviorManifest: Codable, Sendable {
                 "sleep": staticBehavior("sleep"),
                 "celebrate": staticBehavior("celebrate"),
                 "run": moveBehavior(140, "random", 300, 80, "run"),
+                "circuit": BehaviorDefinition(
+                    type: .circuit,
+                    speed: 180,
+                    animation: "run",
+                    flipToDirection: true
+                ),
                 "play": staticBehavior("play"),
                 "roll": staticBehavior("roll"),
                 "spin": staticBehavior("spin"),
@@ -161,6 +167,7 @@ public struct BehaviorManifest: Codable, Sendable {
                 "happy": [
                     "walk": 12,
                     "run": 5,
+                    "circuit": 4,
                     "play": 8,
                     "dance": 5,
                     "bounce": 6,
@@ -212,6 +219,7 @@ public struct BehaviorManifest: Codable, Sendable {
                 "normal": [
                     "walk": 12,
                     "patrol": 6,
+                    "circuit": 2,
                     "sit": 8,
                     "groom": 6,
                     "eat": 4,
@@ -373,4 +381,5 @@ public enum BehaviorType: String, Codable, Sendable {
     case hide
     case windowSit
     case windowClimb
+    case circuit
 }

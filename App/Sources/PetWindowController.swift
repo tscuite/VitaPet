@@ -1,6 +1,7 @@
 import AppKit
 import ChatUI
 import Localization
+import ObjectiveC
 import Persistence
 import RenderEngine
 import SpriteKit
@@ -18,6 +19,7 @@ public final class PetWindowController: NSWindowController {
     private let moodDidChange: @MainActor () -> Void
     private var petIdentity: PetIdentity
     private var currentMoodLevelValue: PetMood.MoodLevel
+    private var currentHappinessValue: Int
     private var dragStartMouseLocation: CGPoint?
     private var dragStartWindowOrigin: CGPoint?
     private var hasDragged = false
@@ -27,6 +29,9 @@ public final class PetWindowController: NSWindowController {
     private var bubblePresentationGeneration: UInt = 0
     private var singleClickWorkItem: DispatchWorkItem?
     private var isDoubleClickPending = false
+    private var lastHoverReactionAt: Date = .distantPast
+    private var dragLongPressWorkItem: DispatchWorkItem?
+    private var ambientBubbleTimer: Timer?
     private var behaviorEngine: BehaviorEngine!
     private(set) var isExecutingBehavior = false
     private var currentTrackingTarget: (@MainActor @Sendable () -> NSPoint?)?
@@ -246,6 +251,11 @@ public final class PetWindowController: NSWindowController {
         currentMoodLevelValue
     }
 
+    /// 最近一次同步到主线程的心情数值（0-100），供菜单/状态栏展示。
+    var currentHappiness: Int {
+        currentHappinessValue
+    }
+
     init(
         petIdentity: PetIdentity,
         configManager: ConfigManager,
@@ -279,6 +289,7 @@ public final class PetWindowController: NSWindowController {
         self.moodDidChange = moodDidChange
         self.petIdentity = petIdentity
         self.currentMoodLevelValue = PetMood.level(for: petIdentity.happiness)
+        self.currentHappinessValue = PetMood.clamp(petIdentity.happiness)
         self.behaviorEngine = behaviorEngine
         self.lastRecordedState = self.animationStateSnapshot.rawValue
 
@@ -340,6 +351,9 @@ public final class PetWindowController: NSWindowController {
         cancelMovementSession()
         isExecutingBehavior = false
         isThinking = false
+        ambientBubbleTimer?.invalidate()
+        ambientBubbleTimer = nil
+        cancelDragLongPressBubble()
         bubbleDismissWorkItem?.cancel()
         bubbleDismissWorkItem = nil
         bubblePresentationGeneration &+= 1
@@ -381,6 +395,7 @@ public final class PetWindowController: NSWindowController {
         }
 
         startCursorTrackingIfNeeded()
+        startAmbientBubbleTimerIfNeeded()
         setupSpaceChangeObserver(spaceMode: configManager.config.spaceMode)
     }
 
@@ -459,6 +474,7 @@ public final class PetWindowController: NSWindowController {
         dragStartWindowOrigin = window.frame.origin
         hasDragged = false
         recentDragPositions = []
+        scheduleDragLongPressBubble()
 
         guard shouldStartDragAnimation else {
             return
@@ -510,9 +526,30 @@ public final class PetWindowController: NSWindowController {
         }
     }
 
+    /// 拖动宠物超过 1.2s 还没松手时，冒个「放我下来~」之类的气泡（只触发一次，且仅在拖动中）。
+    private func scheduleDragLongPressBubble() {
+        cancelDragLongPressBubble()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.hasDragged else { return }
+            if let text = L10n.petDragLongTexts.randomElement(), !text.isEmpty, !text.hasPrefix("pet.") {
+                self.showBubble(text)
+            }
+        }
+        dragLongPressWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: workItem)
+    }
+
+    private func cancelDragLongPressBubble() {
+        dragLongPressWorkItem?.cancel()
+        dragLongPressWorkItem = nil
+    }
+
     fileprivate func handleMouseUp(with event: NSEvent) {
         let didDrag = hasDragged
         let dragVelocity = didDrag ? currentDragVelocity() : nil
+        // NSEvent 只在事件分发期间有效，跨 Task 读取前先把需要的值取出来。
+        let clickCount = event.clickCount
+        cancelDragLongPressBubble()
 
         dragStartMouseLocation = nil
         dragStartWindowOrigin = nil
@@ -535,6 +572,15 @@ public final class PetWindowController: NSWindowController {
                         return
                     }
 
+                    // 被用力甩出去时（任一方向），宠物会「吓一跳」再落地回弹。
+                    let thrownHard = abs(dragVelocity.x) > 400 || abs(dragVelocity.y) > 400
+                    if thrownHard {
+                        self.applyAnimation(.surprised, forceState: false)
+                        if let text = L10n.petDragThrowTexts.randomElement(), !text.isEmpty, !text.hasPrefix("pet.") {
+                            self.showBubble(text)
+                        }
+                    }
+
                     self.performBounce(with: dragVelocity) {
                         Task {
                             await self.stateMachine.setState(.idle)
@@ -548,7 +594,7 @@ public final class PetWindowController: NSWindowController {
                     return
                 }
 
-                if event.clickCount == 2 {
+                if clickCount == 2 {
                     let interaction = self.doubleClickInteraction()
                     self.isDoubleClickPending = true
                     self.singleClickWorkItem?.cancel()
@@ -644,6 +690,144 @@ public final class PetWindowController: NSWindowController {
             applyAnimation(state, forceState: false)
         }
         updatePetScale(for: petScene.size)
+    }
+
+    // MARK: - Context menu (right-click)
+
+    /// 右键宠物时弹出互动菜单：喂食 / 玩耍 / 摸摸头 / 聊天。
+    fileprivate func presentContextMenu(with event: NSEvent) {
+        guard wantsPetVisible, let view = window?.contentView else { return }
+        cancelAutonomousMovement()
+        petScene.resumeRendering()
+
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        menu.addItem(makeContextItem(title: "🍖 \(L10n.menuFeedPet)", action: #selector(PetMenuTarget.feed), represented: PetMenuTarget.Action.feed))
+        menu.addItem(makeContextItem(title: "🎾 \(L10n.menuPlayWithPet)", action: #selector(PetMenuTarget.play), represented: PetMenuTarget.Action.play))
+        menu.addItem(makeContextItem(title: "🤚 \(L10n.menuPatPet)", action: #selector(PetMenuTarget.pat), represented: PetMenuTarget.Action.pat))
+        menu.addItem(.separator())
+
+        let moodTitle = "❤️ \(L10n.menuPetMood): \(currentMoodLevelValue.emoji) \(currentHappinessValue)"
+        let moodItem = NSMenuItem(title: moodTitle, action: nil, keyEquivalent: "")
+        moodItem.isEnabled = false
+        menu.addItem(moodItem)
+        menu.addItem(.separator())
+
+        menu.addItem(makeContextItem(title: "💬 \(L10n.menuChat)", action: #selector(PetMenuTarget.chat), represented: PetMenuTarget.Action.chat))
+
+        let target = PetMenuTarget { [weak self] action in
+            self?.handleContextMenuAction(action)
+        }
+        for item in menu.items where item.representedObject is PetMenuTarget.Action {
+            item.target = target
+        }
+        // NSMenu 不持有 target，需让 menu 持有一段时间直到回调完成
+        objc_setAssociatedObject(menu, &PetMenuTarget.associatedKey, target, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+
+        NSMenu.popUpContextMenu(menu, with: event, for: view)
+    }
+
+    private func makeContextItem(title: String, action: Selector, represented: PetMenuTarget.Action) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.representedObject = represented
+        return item
+    }
+
+    private func handleContextMenuAction(_ action: PetMenuTarget.Action) {
+        switch action {
+        case .feed:
+            Task {
+                await self.adjustMood(by: 8)
+                await MainActor.run {
+                    self.applyAnimation([.eat, .snack].randomElement() ?? .eat, forceState: false)
+                    self.showBubble(L10n.petContextFeed)
+                }
+            }
+        case .play:
+            Task {
+                await self.adjustMood(by: 5)
+                await MainActor.run {
+                    self.applyAnimation([.play, .spin, .bounce].randomElement() ?? .play, forceState: false)
+                    self.showBubble(L10n.petContextPlay)
+                }
+            }
+        case .pat:
+            Task {
+                await self.adjustMood(by: 3)
+                await MainActor.run {
+                    self.applyAnimation([.nuzzle, .love].randomElement() ?? .nuzzle, forceState: false)
+                    self.showBubble(L10n.petContextPat)
+                }
+            }
+        case .chat:
+            chatController.showChat()
+        }
+    }
+
+    // MARK: - Hover reaction
+
+    fileprivate func handleMouseEntered() {
+        guard wantsPetVisible else { return }
+
+        // 冷却 + 概率，避免来回扫过就一直触发
+        let cooldown: TimeInterval = 18
+        guard Date().timeIntervalSince(lastHoverReactionAt) >= cooldown else { return }
+        guard Double.random(in: 0...1) < 0.4 else { return }
+
+        // 双击连招播放期间 / 自治行为执行期间不要打断（与 handleMouseDown 的防护一致）
+        guard Date() >= animationLockUntil, !isExecutingBehavior else { return }
+        lastHoverReactionAt = Date()
+
+        petScene.resumeRendering()
+        let animation: AnimationState = [.tailWag, .blink, .surprised].randomElement() ?? .tailWag
+        applyAnimation(animation, forceState: false)
+
+        if Double.random(in: 0...1) < 0.6 {
+            let text = L10n.petHoverTexts.randomElement() ?? ""
+            if !text.isEmpty, !text.hasPrefix("pet.") {
+                showBubble(text)
+            }
+        }
+    }
+
+    fileprivate func handleMouseExited() {
+        // 目前无需在移出时做任何事；保留此钩子以便将来加「目光追随/恢复 idle」。
+    }
+
+    // MARK: - Ambient self-talk
+
+    /// 启动「自言自语」环境计时器：长时间没人理会时，宠物会按心情冒泡。
+    func startAmbientBubbleTimerIfNeeded() {
+        guard ambientBubbleTimer == nil else { return }
+        scheduleAmbientBubble()
+    }
+
+    private func scheduleAmbientBubble() {
+        ambientBubbleTimer?.invalidate()
+        // 3–7 分钟随机一次，显得不那么机械
+        let interval = TimeInterval.random(in: 180...420)
+        let timer = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.fireAmbientBubble()
+                self?.scheduleAmbientBubble()
+            }
+        }
+        ambientBubbleTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func fireAmbientBubble() {
+        guard wantsPetVisible, !isThinking, !isExecutingBehavior else { return }
+        let texts: [String]
+        switch currentMoodLevelValue {
+        case .happy: texts = L10n.petAmbientHappy
+        case .sad: texts = L10n.petAmbientSad
+        case .normal: texts = L10n.petAmbientNormal
+        }
+        // trs 在缺键时会返回 [key] 本身（如 "pet.ambient.happy"），这种占位值不要直接冒泡。
+        guard let text = texts.randomElement(), !text.isEmpty, !text.hasPrefix("pet.ambient") else { return }
+        showBubble(text, duration: 3.0)
     }
 
     func handleAnimationTrigger(_ trigger: AnimationTrigger) async {
@@ -762,7 +946,7 @@ public final class PetWindowController: NSWindowController {
 
     // MARK: - Debug
 
-    func debugPlayAnimation(_ name: String) {
+    func debugPlayAnimation(_ name: String, showDebugBubble: Bool = true) {
         guard let state = ActionComboPlanner.playbackState(for: name) else { return }
         behaviorEngine.cancelCurrentBehavior()
         behaviorEngine.stopCursorTracking()
@@ -775,7 +959,9 @@ public final class PetWindowController: NSWindowController {
             executeBehaviorMovement(behaviorName)
         }
 
-        showBubble("🐛 anim: \(name)")
+        if showDebugBubble {
+            showBubble("🐛 anim: \(name)")
+        }
     }
 
     func debugMoveTest() {
@@ -1295,6 +1481,8 @@ public final class PetWindowController: NSWindowController {
         switch behaviorName.lowercased() {
         case "walk", "patrol":
             return .walk
+        case "circuit":
+            return .run
         case "jump":
             return .bounce
         case "sitonwindow", "windowclimb":
@@ -1320,7 +1508,7 @@ public final class PetWindowController: NSWindowController {
 
     private func isMovementBehavior(_ type: BehaviorType) -> Bool {
         switch type {
-        case .move, .jump, .chase, .hide, .windowSit, .windowClimb:
+        case .move, .jump, .chase, .hide, .windowSit, .windowClimb, .circuit:
             return true
         default:
             return false
@@ -1565,6 +1753,7 @@ public final class PetWindowController: NSWindowController {
 
         await MainActor.run {
             self.currentMoodLevelValue = moodLevel
+            self.currentHappinessValue = happiness
 
             do {
                 try self.updatePetIdentity { $0.happiness = happiness }
@@ -1685,6 +1874,37 @@ private enum BubbleInteraction {
     case doubleClick
 }
 
+private extension PetMood.MoodLevel {
+    var emoji: String {
+        switch self {
+        case .happy: return "😊"
+        case .normal: return "😐"
+        case .sad: return "😢"
+        }
+    }
+}
+
+/// 右键菜单的回调中继：NSMenuItem 需要一个 @objc target，这里把选择映射回 Swift 闭包。
+@MainActor
+private final class PetMenuTarget: NSObject {
+    enum Action {
+        case feed, play, pat, chat
+    }
+
+    static var associatedKey: UInt8 = 0
+
+    private let handler: (Action) -> Void
+
+    init(handler: @escaping (Action) -> Void) {
+        self.handler = handler
+    }
+
+    @objc func feed(_ sender: NSMenuItem) { handler(.feed) }
+    @objc func play(_ sender: NSMenuItem) { handler(.play) }
+    @objc func pat(_ sender: NSMenuItem) { handler(.pat) }
+    @objc func chat(_ sender: NSMenuItem) { handler(.chat) }
+}
+
 @MainActor
 private final class PetWindow: NSWindow {
     override var canBecomeKey: Bool { true }
@@ -1693,6 +1913,7 @@ private final class PetWindow: NSWindow {
 @MainActor
 private final class PetInteractionView: SKView {
     weak var controller: PetWindowController?
+    private var hoverTrackingArea: NSTrackingArea?
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         bounds.contains(point) ? self : nil
@@ -1700,6 +1921,33 @@ private final class PetInteractionView: SKView {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTrackingArea {
+            removeTrackingArea(hoverTrackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        controller?.handleMouseEntered()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        controller?.handleMouseExited()
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        controller?.presentContextMenu(with: event)
     }
 
     override func mouseDown(with event: NSEvent) {

@@ -155,6 +155,15 @@ public final class BehaviorEngine {
                 onFlip: onFlip,
                 onComplete: onComplete
             )
+        case .circuit:
+            executeCircuit(
+                definition: definition,
+                currentPosition: currentPosition,
+                petSize: petSize,
+                onMove: onMove,
+                onFlip: onFlip,
+                onComplete: onComplete
+            )
         default:
             onComplete()
         }
@@ -679,6 +688,136 @@ public final class BehaviorEngine {
                 )
             }
         )
+    }
+
+    /// 绕屏跑：让宠物沿屏幕可视区域（内缩一个宠物尺寸）的矩形周长跑一整圈。
+    /// 起点先跑到最近的角，再随机顺时针/逆时针绕回起点角，结束回正。
+    /// 水平段旋转 0 并按方向翻转；竖直段旋转 ±90°（像沿屏幕边沿往上/下跑）。
+    private func executeCircuit(
+        definition: BehaviorDefinition,
+        currentPosition: NSPoint,
+        petSize: CGFloat,
+        onMove: @escaping @MainActor @Sendable (NSPoint, TimeInterval) -> Void,
+        onFlip: @escaping @MainActor @Sendable (Bool) -> Void,
+        onComplete: @escaping @MainActor @Sendable () -> Void
+    ) {
+        let (minX, maxX, minY, maxY) = clampedRange(petSize: petSize)
+        guard maxX > minX, maxY > minY else {
+            onComplete()
+            return
+        }
+
+        let corners = [
+            NSPoint(x: minX, y: minY),  // 0: 左下
+            NSPoint(x: maxX, y: minY),  // 1: 右下
+            NSPoint(x: maxX, y: maxY),  // 2: 右上
+            NSPoint(x: minX, y: maxY)   // 3: 左上
+        ]
+
+        // 最近角作为环路入口
+        guard let startIndex = corners.indices.min(by: {
+            movementDistance(from: currentPosition, to: corners[$0])
+                < movementDistance(from: currentPosition, to: corners[$1])
+        }) else {
+            onComplete()
+            return
+        }
+
+        let clockwise = Bool.random()
+        // 闭环路点：[入口角 → 下一角 → ... → 回到入口角]，共 5 个点（4 段边）。
+        let lapPoints: [NSPoint] = (0...4).map { step in
+            let idx = clockwise
+                ? (startIndex + step) % 4
+                : (startIndex - step + 8) % 4
+            return corners[idx]
+        }
+
+        let speed = max(definition.speed ?? 180, 1.0)
+        let startCorner = corners[startIndex]
+
+        struct CircuitSegment {
+            let from: NSPoint
+            let target: NSPoint
+            let rotation: CGFloat
+            let faceLeft: Bool?  // nil = 保持当前朝向（竖直段不额外翻转）
+            let horizontal: Bool
+        }
+
+        // 逐段构建，并携带当前朝向，以便竖直段的旋转方向与朝向匹配
+        // （xScale 翻转会影响 zRotation 的视觉方向，朝左时必须取反旋转角度）。
+        var segments: [CircuitSegment] = []
+        var facingRight = true
+        var previous = currentPosition
+
+        func addSegment(to target: NSPoint) {
+            let dx = abs(target.x - previous.x)
+            let dy = abs(target.y - previous.y)
+            let horizontal = dx >= dy
+            var rotation: CGFloat = 0
+            var faceLeft: Bool? = nil
+
+            if horizontal {
+                if target.x < previous.x {
+                    faceLeft = true
+                    facingRight = false
+                } else if target.x > previous.x {
+                    faceLeft = false
+                    facingRight = true
+                }
+            } else {
+                let upward = target.y > previous.y
+                // 朝右：上 +90°、下 -90°；朝左：上 -90°、下 +90°。
+                rotation = (facingRight ? CGFloat.pi / 2 : -.pi / 2) * (upward ? 1 : -1)
+            }
+
+            segments.append(CircuitSegment(from: previous, target: target, rotation: rotation, faceLeft: faceLeft, horizontal: horizontal))
+            previous = target
+        }
+
+        // 起跑段（current → 入口角）+ 环路四条边
+        addSegment(to: startCorner)
+        for target in lapPoints.dropFirst() {
+            addSegment(to: target)
+        }
+
+        let movementID = UUID()
+        currentMovement = MovementState(id: movementID, completion: onComplete)
+        onAnimationChange?(definition.animation ?? "run")
+
+        func runSegment(_ index: Int) {
+            guard let movement = currentMovement, movement.id == movementID else {
+                return
+            }
+            guard index < segments.count else {
+                self.onRotate?(0)
+                movement.timer = nil
+                self.currentMovement = nil
+                movement.finish()
+                return
+            }
+
+            let segment = segments[index]
+            self.onRotate?(segment.rotation)
+            if let faceLeft = segment.faceLeft {
+                onFlip(faceLeft)
+            }
+
+            self.runLinearMovement(
+                movementID: movementID,
+                from: segment.from,
+                to: segment.target,
+                speed: speed,
+                autoComplete: false,
+                onMove: { point in
+                    onMove(point, 0)
+                },
+                onComplete: {
+                    runSegment(index + 1)
+                }
+            )
+        }
+
+        runSegment(0)
     }
 
     private func runLinearMovement(

@@ -173,5 +173,44 @@
   ],
   "pet.interaction.chase_start": "来抓我呀！",
   "pet.interaction.chase_caught": "被你抓到了！",
-  "pet.interaction.dance": "一起跳舞吧！"
+  "pet.interaction.dance": "一起跳舞吧！",
+  "menu.feed_pet": "喂食",
+  "menu.play_with_pet": "玩耍",
+  "menu.pat_pet": "摸摸头",
+  "menu.pet_mood": "心情",
+  "pet.context.feed": "好吃！还要还要~",
+  "pet.context.play": "一起玩真开心！",
+  "pet.context.pat": "好舒服呀~",
+  "pet.hover": [
+    "嗯？",
+    "要摸摸吗？",
+    "看到我啦~",
+    "嘿嘿，你好呀"
+  ],
+  "pet.drag.long": [
+    "放我下来~",
+    "飞咯！",
+    "晕晕的..."
+  ],
+  "pet.drag.throw": [
+    "哇！",
+    "好高！",
+    "我会飞！"
+  ],
+  "pet.ambient.happy": [
+    "今天心情真好！",
+    "好开心呀~",
+    "元气满满！"
+  ],
+  "pet.ambient.normal": [
+    "在忙吗？",
+    "有点无聊...",
+    "陪你一会儿~",
+    "今天天气怎么样？"
+  ],
+  "pet.ambient.sad": [
+    "有点寂寞...",
+    "没人陪我玩...",
+    "想你了..."
+  ]
 }

@@ -94,6 +94,12 @@
       "animation": "run",
       "flipToDirection": true
     },
+    "circuit": {
+      "type": "circuit",
+      "speed": 180,
+      "animation": "run",
+      "flipToDirection": true
+    },
     "play": {
       "type": "static",
       "animation": "play"
@@ -385,6 +391,7 @@
     "happy": {
       "walk": 12,
       "run": 5,
+      "circuit": 4,
       "play": 8,
       "dance": 5,
       "bounce": 6,
@@ -436,6 +443,7 @@
     "normal": {
       "walk": 12,
       "patrol": 6,
+      "circuit": 2,
       "sit": 8,
       "groom": 6,
       "eat": 4,

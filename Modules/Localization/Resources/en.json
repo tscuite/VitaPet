@@ -175,5 +175,44 @@
   ],
   "pet.interaction.chase_start": "Catch me if you can!",
   "pet.interaction.chase_caught": "You got me!",
-  "pet.interaction.dance": "Let's dance together!"
+  "pet.interaction.dance": "Let's dance together!",
+  "menu.feed_pet": "Feed",
+  "menu.play_with_pet": "Play",
+  "menu.pat_pet": "Pat",
+  "menu.pet_mood": "Mood",
+  "pet.context.feed": "Yummy! More please~",
+  "pet.context.play": "Playing with you is so fun!",
+  "pet.context.pat": "So cozy~",
+  "pet.hover": [
+    "Hm?",
+    "Want to pet me?",
+    "You see me~",
+    "Hehe, hi there"
+  ],
+  "pet.drag.long": [
+    "Put me down~",
+    "I'm flying!",
+    "So dizzy..."
+  ],
+  "pet.drag.throw": [
+    "Whoa!",
+    "So high!",
+    "I can fly!"
+  ],
+  "pet.ambient.happy": [
+    "I feel great today!",
+    "So happy~",
+    "Full of energy!"
+  ],
+  "pet.ambient.normal": [
+    "Busy?",
+    "A bit bored...",
+    "Keeping you company~",
+    "How's the weather?"
+  ],
+  "pet.ambient.sad": [
+    "A bit lonely...",
+    "No one plays with me...",
+    "Miss you..."
+  ]
 }

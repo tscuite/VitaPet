@@ -19,6 +19,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let togglePetVisibilityAction: @MainActor () -> Void
     private let currentPetSize: @MainActor () -> CGFloat
     private let currentMoodLevel: @MainActor () -> PetMood.MoodLevel
+    private let currentHappiness: @MainActor () -> Int
     private let resizePetsAction: @MainActor (CGFloat) -> Void
     private let canAddPet: @MainActor () -> Bool
     private let addPetAction: @MainActor () -> Void
@@ -60,6 +61,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         togglePetVisibility: @escaping @MainActor () -> Void,
         currentPetSize: @escaping @MainActor () -> CGFloat,
         currentMoodLevel: @escaping @MainActor () -> PetMood.MoodLevel,
+        currentHappiness: @escaping @MainActor () -> Int = { 50 },
         resizePets: @escaping @MainActor (CGFloat) -> Void,
         canAddPet: @escaping @MainActor () -> Bool,
         addPet: @escaping @MainActor () -> Void,
@@ -89,6 +91,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.togglePetVisibilityAction = togglePetVisibility
         self.currentPetSize = currentPetSize
         self.currentMoodLevel = currentMoodLevel
+        self.currentHappiness = currentHappiness
         self.resizePetsAction = resizePets
         self.canAddPet = canAddPet
         self.addPetAction = addPet
@@ -177,7 +180,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         button.imagePosition = .imageOnly
         button.image?.isTemplate = true
         button.image?.accessibilityDescription = "VitaPet"
-        button.toolTip = tooltip(for: currentMoodLevel())
+        button.toolTip = tooltip(for: currentMoodLevel(), happiness: currentHappiness())
     }
 
     private func configureMenu() {
@@ -308,7 +311,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     func refreshMoodTooltip() {
-        statusItem.button?.toolTip = tooltip(for: currentMoodLevel())
+        statusItem.button?.toolTip = tooltip(for: currentMoodLevel(), happiness: currentHappiness())
     }
 
     private func updateToggleTitle() {
@@ -568,14 +571,14 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         return image
     }
 
-    private func tooltip(for level: PetMood.MoodLevel) -> String {
+    private func tooltip(for level: PetMood.MoodLevel, happiness: Int) -> String {
         switch level {
         case .happy:
-            return "😊 心情很好"
+            return "😊 心情很好 (\(happiness))"
         case .normal:
-            return "😐 心情平静"
+            return "😐 心情平静 (\(happiness))"
         case .sad:
-            return "😢 心情低落"
+            return "😢 心情低落 (\(happiness))"
         }
     }
 }

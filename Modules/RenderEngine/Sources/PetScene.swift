@@ -667,22 +667,49 @@ public final class PetScene: SKScene, @unchecked Sendable {
             ])
 
         case .wave:
-            // 招手：单帧 wave 资源原本静止。用小幅倾斜 + 轻微上下弹动模拟挥手的自然节奏，
-            // 避免整体大角度旋转显得僵硬难看。
+            // 招手优化：单帧 wave 精灵的手臂已经抬起，问题在于「整只猫左右大幅旋转」显得僵硬难看。
+            // 改为：朝挥手那一侧轻轻带一下 + 小幅不对称回摆（摆幅减半、带缓动），配合轻快的小跳和
+            // 轻微挤压回弹，让招手读起来像身体跟着手臂自然呼吸，而不是机械地左右晃。
+            let bx = baseline.xScale
+            let direction = bx < 0 ? -1.0 : 1.0
+
+            // 单侧带摆：朝挥手侧轻倾 ~3°，再反向轻带 ~1.6°，缓动过渡。
             let sway = SKAction.sequence([
-                SKAction.rotate(toAngle: .pi / 45, duration: 0.22, shortestUnitArc: true),   // ~4°
-                SKAction.rotate(toAngle: -.pi / 45, duration: 0.22, shortestUnitArc: true)
+                SKAction.rotate(toAngle: direction * .pi / 60, duration: 0.16, shortestUnitArc: true),
+                SKAction.rotate(toAngle: direction * -.pi / 110, duration: 0.18, shortestUnitArc: true)
             ])
-            let bob = SKAction.sequence([
-                SKAction.scaleY(to: 1.04, duration: 0.22),
-                SKAction.scaleY(to: 1.0, duration: 0.22)
+            sway.timingMode = .easeInEaseOut
+
+            // 轻快小跳：抬 3pt 再落下，给招手一点活力。
+            let hop = SKAction.sequence([
+                SKAction.moveBy(x: 0, y: 3, duration: 0.16),
+                SKAction.moveBy(x: 0, y: -3, duration: 0.18)
             ])
-            let wave = SKAction.group([sway, bob])
-            return SKAction.sequence([
-                SKAction.repeat(wave, count: 4),
+            hop.timingMode = .easeInEaseOut
+
+            // 微挤压回弹：整体轻微放大→收紧→回正，保留朝向（xScale 符号）。
+            let pulse = SKAction.sequence([
                 SKAction.group([
-                    SKAction.rotate(toAngle: 0, duration: 0.12, shortestUnitArc: true),
-                    SKAction.scaleY(to: 1.0, duration: 0.12)
+                    SKAction.scaleX(to: bx * 1.05, duration: 0.10),
+                    SKAction.scaleY(to: 1.05, duration: 0.10)
+                ]),
+                SKAction.group([
+                    SKAction.scaleX(to: bx * 0.98, duration: 0.12),
+                    SKAction.scaleY(to: 0.98, duration: 0.12)
+                ]),
+                SKAction.group([
+                    SKAction.scaleX(to: bx, duration: 0.10),
+                    SKAction.scaleY(to: 1.0, duration: 0.10)
+                ])
+            ])
+
+            let beat = SKAction.group([sway, hop, pulse])
+            return SKAction.sequence([
+                SKAction.repeat(beat, count: 3),
+                SKAction.group([
+                    SKAction.rotate(toAngle: 0, duration: 0.14, shortestUnitArc: true),
+                    SKAction.scaleX(to: bx, duration: 0.14),
+                    SKAction.scaleY(to: 1.0, duration: 0.14)
                 ])
             ])
 
