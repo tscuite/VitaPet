@@ -3,10 +3,12 @@ import Foundation
 struct SpritePackPreviewRenderConfiguration: Equatable, Sendable {
     let normalizedPackPath: String?
     let previewSize: Double
+    let reduceMotion: Bool
 
-    init(packDirectory: URL?, previewSize: Double) {
+    init(packDirectory: URL?, previewSize: Double, reduceMotion: Bool = false) {
         normalizedPackPath = packDirectory?.standardizedFileURL.path
         self.previewSize = previewSize
+        self.reduceMotion = reduceMotion
     }
 
     static func == (
@@ -14,6 +16,7 @@ struct SpritePackPreviewRenderConfiguration: Equatable, Sendable {
         rhs: SpritePackPreviewRenderConfiguration
     ) -> Bool {
         lhs.normalizedPackPath == rhs.normalizedPackPath
+            && lhs.reduceMotion == rhs.reduceMotion
             && (lhs.previewSize == rhs.previewSize
                 || (lhs.previewSize.isNaN && rhs.previewSize.isNaN))
     }

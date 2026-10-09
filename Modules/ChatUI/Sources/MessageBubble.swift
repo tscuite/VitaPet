@@ -1,3 +1,4 @@
+import Localization
 import SwiftUI
 
 @MainActor
@@ -87,7 +88,7 @@ public struct MessageBubble: View, Equatable {
                 HStack(spacing: 4) {
                     Image(systemName: thinkingExpanded ? "chevron.down" : "chevron.right")
                         .font(.caption2)
-                    Text("💭 思考过程")
+                    Text(L10n.chatThinking)
                         .font(.caption.weight(.medium))
                 }
                 .foregroundStyle(.secondary)

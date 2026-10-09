@@ -12,7 +12,7 @@ final class StoragePolicyTests: XCTestCase {
         XCTAssertEqual(policy.fileDetailRetention, 86_400)
         XCTAssertEqual(policy.eventRetention, 2_592_000)
         XCTAssertEqual(policy.flushInterval, 30)
-        XCTAssertEqual(policy.maintenanceInterval, 86_400)
+        XCTAssertEqual(policy.maintenanceInterval, 3_600)
         XCTAssertEqual(policy.fullCompactionMinimumBytes, 256 * mebibyte)
         XCTAssertEqual(policy.fullCompactionFreeRatio, 0.25)
         XCTAssertEqual(policy.compactionSafetyBytes, 256 * mebibyte)

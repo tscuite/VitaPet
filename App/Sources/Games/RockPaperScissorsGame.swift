@@ -1,8 +1,9 @@
 import AppKit
+import Localization
 
 @MainActor
 final class RockPaperScissorsGame: NSObject, MiniGame {
-    let name = "猜拳"
+    var name: String { L10n.gameRockPaperScissors }
     let minPets = 1
     let maxPets = 2
 

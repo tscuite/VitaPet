@@ -253,10 +253,8 @@ public struct SettingsView: View {
     @State private var memoryWorkerEnabled: Bool
     @State private var memoryWorkerEndpoint: String
     @State private var memoryWorkerAuthMode: String
-    @State private var memoryWorkerUsername: String
     @State private var memoryWorkerSecret: String
     @State private var memoryWorkerScope: String
-    @State private var memoryWorkerSubject: String
     @State private var memoryWorkerQueryLimit: Int
     @State private var memoryWorkerConnectionMessage: String?
     @State private var memoryWorkerConnectionFailed: Bool
@@ -314,7 +312,7 @@ public struct SettingsView: View {
     private let onTestAIMemoryConnection: @MainActor () async -> String?
     private let onTestAIMemoryWrite: @MainActor () async -> String?
     private let onSaveAIConfig: @MainActor (String, String, String, AIEngine.AIBackend, String, String) -> String?
-    private let onSaveAIMemoryConfig: @MainActor (Bool, String, String, String, String, String, String, Int) -> Void
+    private let onSaveAIMemoryConfig: @MainActor (Bool, String, String, String, String, Int) -> Void
     private let onSaveNotificationConfig: @MainActor (String, Bool, Int, String) -> Void
     private let onSaveChatAppearance: @MainActor (Bool, Double) -> Void
     private let storageSummary: @MainActor () -> String
@@ -360,12 +358,10 @@ public struct SettingsView: View {
         aiSystemPrompt: String = "",
         memoryWorkerEnabled: Bool = false,
         memoryWorkerEndpoint: String = "https://memory.example.com",
-        memoryWorkerAuthMode: String = "basic",
-        memoryWorkerUsername: String = "",
+        memoryWorkerAuthMode: String = "signed",
         memoryWorkerSecret: String = "",
-        memoryWorkerScope: String = "user",
-        memoryWorkerSubject: String = "demo-user",
-        memoryWorkerQueryLimit: Int = 5,
+        memoryWorkerScope: String = "general",
+        memoryWorkerQueryLimit: Int = 50,
         githubToken: String = "",
         webhookEnabled: Bool = false,
         webhookPort: Int = 19280,
@@ -376,7 +372,7 @@ public struct SettingsView: View {
         onTestAIMemoryConnection: @escaping @MainActor () async -> String? = { nil },
         onTestAIMemoryWrite: @escaping @MainActor () async -> String? = { nil },
         onSaveAIConfig: @escaping @MainActor (String, String, String, AIEngine.AIBackend, String, String) -> String? = { _, _, _, _, _, _ in nil },
-        onSaveAIMemoryConfig: @escaping @MainActor (Bool, String, String, String, String, String, String, Int) -> Void = { _, _, _, _, _, _, _, _ in },
+        onSaveAIMemoryConfig: @escaping @MainActor (Bool, String, String, String, String, Int) -> Void = { _, _, _, _, _, _ in },
         onSaveNotificationConfig: @escaping @MainActor (String, Bool, Int, String) -> Void = { _, _, _, _ in },
         onUpdatePet: @escaping @MainActor (UUID, String, String, Double, String, String, String, String) -> Void = { _, _, _, _, _, _, _, _ in },
         onUpdatePetSound: @escaping @MainActor (UUID, Bool?, Float?) -> Void = { _, _, _ in },
@@ -429,10 +425,8 @@ public struct SettingsView: View {
         _memoryWorkerEnabled = State(initialValue: memoryWorkerEnabled)
         _memoryWorkerEndpoint = State(initialValue: memoryWorkerEndpoint)
         _memoryWorkerAuthMode = State(initialValue: memoryWorkerAuthMode)
-        _memoryWorkerUsername = State(initialValue: memoryWorkerUsername)
         _memoryWorkerSecret = State(initialValue: memoryWorkerSecret)
         _memoryWorkerScope = State(initialValue: memoryWorkerScope)
-        _memoryWorkerSubject = State(initialValue: memoryWorkerSubject)
         _memoryWorkerQueryLimit = State(initialValue: max(1, min(100, memoryWorkerQueryLimit)))
         _memoryWorkerConnectionMessage = State(initialValue: nil)
         _memoryWorkerConnectionFailed = State(initialValue: false)
@@ -1198,8 +1192,8 @@ public struct SettingsView: View {
 
                         LabeledContent("鉴权方式") {
                             Picker("", selection: $memoryWorkerAuthMode) {
-                                Text("Basic").tag("basic")
                                 Text("Bearer").tag("bearer")
+                                Text("签名").tag("signed")
                             }
                             .labelsHidden()
                             .pickerStyle(.segmented)
@@ -1217,17 +1211,9 @@ public struct SettingsView: View {
                                         saveAIMemoryConfig()
                                     }
                             }
-                        } else {
-                            LabeledContent("用户名") {
-                                TextField("username", text: $memoryWorkerUsername)
-                                    .textFieldStyle(.roundedBorder)
-                                    .onChange(of: memoryWorkerUsername) { _, _ in
-                                        saveAIMemoryConfig()
-                                    }
-                            }
-
-                            LabeledContent("密码") {
-                                SecureField("password", text: $memoryWorkerSecret)
+                        } else if memoryWorkerAuthMode == "signed" {
+                            LabeledContent("签名密钥") {
+                                SecureField("API_SECRET", text: $memoryWorkerSecret)
                                     .textFieldStyle(.roundedBorder)
                                     .onChange(of: memoryWorkerSecret) { _, _ in
                                         saveAIMemoryConfig()
@@ -1235,16 +1221,8 @@ public struct SettingsView: View {
                             }
                         }
 
-                        LabeledContent("用户标识 (Subject)") {
-                            TextField("默认使用当前设备", text: $memoryWorkerSubject)
-                                .textFieldStyle(.roundedBorder)
-                                .onChange(of: memoryWorkerSubject) { _, _ in
-                                    saveAIMemoryConfig()
-                                }
-                        }
-
                         LabeledContent("命名空间 (Scope)") {
-                            TextField("user", text: $memoryWorkerScope)
+                            TextField("general", text: $memoryWorkerScope)
                                 .textFieldStyle(.roundedBorder)
                                 .onChange(of: memoryWorkerScope) { _, _ in
                                     saveAIMemoryConfig()
@@ -2112,11 +2090,9 @@ public struct SettingsView: View {
         pendingAIMemorySaveTask?.cancel()
         let trimmedEndpoint = memoryWorkerEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedAuthMode = memoryWorkerAuthMode.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let resolvedAuthMode = (trimmedAuthMode == "bearer") ? "bearer" : "basic"
-        let trimmedUsername = memoryWorkerUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedAuthMode = ["bearer", "signed"].contains(trimmedAuthMode) ? trimmedAuthMode : "signed"
         let trimmedSecret = memoryWorkerSecret.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedScope = memoryWorkerScope.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedSubject = memoryWorkerSubject.trimmingCharacters(in: .whitespacesAndNewlines)
         let clampedLimit = max(1, min(100, memoryWorkerQueryLimit))
 
         if clampedLimit != memoryWorkerQueryLimit {
@@ -2128,10 +2104,8 @@ public struct SettingsView: View {
                 memoryWorkerEnabled,
                 trimmedEndpoint,
                 resolvedAuthMode,
-                trimmedUsername,
                 trimmedSecret,
                 trimmedScope,
-                trimmedSubject,
                 clampedLimit
             )
         }

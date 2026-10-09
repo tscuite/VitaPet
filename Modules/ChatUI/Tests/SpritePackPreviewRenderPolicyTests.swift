@@ -64,6 +64,13 @@ final class SpritePackPreviewRenderPolicyTests: XCTestCase {
         XCTAssertEqual(renderCount, 1)
     }
 
+    func testReducedMotionChangeInvalidatesPreviewOnlyOnce() {
+        var policy = SpritePackPreviewRenderPolicy()
+        XCTAssertTrue(policy.shouldRender(.init(packDirectory: nil, previewSize: 64)))
+        XCTAssertTrue(policy.shouldRender(.init(packDirectory: nil, previewSize: 64, reduceMotion: true)))
+        XCTAssertFalse(policy.shouldRender(.init(packDirectory: nil, previewSize: 64, reduceMotion: true)))
+    }
+
     private func makePreview(
         path: String?,
         size: CGFloat

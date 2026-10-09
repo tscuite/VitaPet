@@ -14,9 +14,9 @@ final class PetSceneTests: XCTestCase {
 
         XCTAssertEqual(
             scene.targetRenderCadence,
-            RenderCadence(framesPerSecond: 5, scenePaused: true, viewPaused: true)
+            RenderCadence(framesPerSecond: 15, scenePaused: false, viewPaused: false)
         )
-        XCTAssertTrue(scene.isPaused)
+        XCTAssertFalse(scene.isPaused)
     }
 
     func testIdleAnimationResetsRotationWithoutRequiringAView() {

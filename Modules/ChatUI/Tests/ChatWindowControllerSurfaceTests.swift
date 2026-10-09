@@ -128,6 +128,71 @@ final class ChatWindowControllerSurfaceTests: XCTestCase {
         XCTAssertTrue(chatHost.superview === container)
         XCTAssertEqual(container.subviews.count, 1)
     }
+
+    func testToolbarSelectionTracksPresentedSurface() throws {
+        let controller = makeController()
+        defer {
+            controller.close()
+        }
+
+        XCTAssertNotNil(controller.window?.toolbar)
+        controller.showChat()
+        XCTAssertEqual(controller.window?.toolbar?.selectedItemIdentifier?.rawValue, "vitapet.chat")
+        controller.showSettings()
+        XCTAssertEqual(controller.window?.toolbar?.selectedItemIdentifier?.rawValue, "vitapet.settings")
+        controller.showActivityLog()
+        XCTAssertEqual(controller.window?.toolbar?.selectedItemIdentifier?.rawValue, "vitapet.activity")
+        controller.showStatistics()
+        XCTAssertEqual(controller.window?.toolbar?.selectedItemIdentifier?.rawValue, "vitapet.statistics")
+        controller.showChat()
+        XCTAssertEqual(controller.window?.toolbar?.selectedItemIdentifier?.rawValue, "vitapet.chat")
+    }
+
+    func testCompanionHomeIsWiredIntoToolbarAndRefreshesOnPresentation() throws {
+        let controller = makeController()
+        defer { controller.close() }
+        var homeCount = 0
+        controller.configureCompanionHome { petID in
+            homeCount += 1
+            return CompanionHomeView(
+                selectedPetID: petID,
+                loadPets: { [] },
+                onCare: { _, _ in "OK" },
+                onChat: { _ in },
+                focusState: { CompanionFocusState(status: "Idle", isIdle: true, isPaused: false, remaining: 0, duration: 1500) },
+                onToggleFocus: {},
+                onResetFocus: {},
+                availableGames: { [] },
+                onStartGame: { _ in }
+            )
+        }
+        let container = try XCTUnwrap(controller.window?.contentView)
+        controller.showCompanionHome()
+        let home = try activeContent(in: container)
+        XCTAssertEqual(controller.window?.toolbar?.selectedItemIdentifier?.rawValue, "vitapet.home")
+        XCTAssertEqual(homeCount, 1)
+        controller.showChat()
+        XCTAssertNil(home.superview)
+        controller.showCompanionHome(forPetId: UUID())
+        XCTAssertEqual(homeCount, 2)
+        XCTAssertEqual(controller.window?.toolbar?.selectedItemIdentifier?.rawValue, "vitapet.home")
+        XCTAssertTrue(controller.window?.contentView === container)
+    }
+
+    func testOffscreenWindowIsRecenteredWhenPresented() throws {
+        let controller = makeController()
+        defer {
+            controller.close()
+        }
+        let window = try XCTUnwrap(controller.window)
+        window.setFrameOrigin(NSPoint(x: -4000, y: -4000))
+
+        controller.showChat()
+
+        let isVisible = NSScreen.screens.contains { $0.visibleFrame.intersects(window.frame) }
+        XCTAssertTrue(isVisible)
+        XCTAssertGreaterThan(window.frame.minX, -100)
+    }
 }
 
 @MainActor

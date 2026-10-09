@@ -8,16 +8,20 @@ public struct ChatView: View {
     @Bindable var viewModel: ChatViewModel
     @AppStorage("chat.showThinking") private var showThinking: Bool = true
     @State private var chatAppearance: ChatAppearanceSettings
+    @FocusState private var isInputFocused: Bool
     private let onSaveChatAppearance: @MainActor (Bool, Double) -> Void
+    private let onOpenSettings: @MainActor () -> Void
 
     public init(
         viewModel: ChatViewModel = ChatViewModel(),
         chatAppearance: ChatAppearanceSettings = ChatAppearanceSettings(),
-        onSaveChatAppearance: @escaping @MainActor (Bool, Double) -> Void = { _, _ in }
+        onSaveChatAppearance: @escaping @MainActor (Bool, Double) -> Void = { _, _ in },
+        onOpenSettings: @escaping @MainActor () -> Void = {}
     ) {
         self.viewModel = viewModel
         _chatAppearance = State(initialValue: chatAppearance)
         self.onSaveChatAppearance = onSaveChatAppearance
+        self.onOpenSettings = onOpenSettings
     }
 
     public var body: some View {
@@ -59,12 +63,13 @@ public struct ChatView: View {
                     .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
             .buttonStyle(.plain)
-            .help(showThinking ? "隐藏思考过程" : "显示思考过程")
+            .help(showThinking ? L10n.chatHelpHideThinking : L10n.chatHelpShowThinking)
 
             TextField(inputPlaceholderText, text: $viewModel.inputText, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
                 .lineLimit(1 ... 8)
+                .focused($isInputFocused)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(
@@ -187,11 +192,18 @@ public struct ChatView: View {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
-        .help("拖动调整聊天窗口透明度")
+        .help(L10n.chatHelpOpacity)
     }
 
     private var messageSurface: some View {
-        ChatMessageSurface(viewModel: viewModel)
+        ChatMessageSurface(
+            viewModel: viewModel,
+            onOpenSettings: onOpenSettings,
+            onUsePrompt: { prompt in
+                viewModel.inputText = prompt
+                isInputFocused = true
+            }
+        )
     }
 
     @ViewBuilder
@@ -213,13 +225,13 @@ public struct ChatView: View {
     private var aiStatusVisual: (title: String, tint: Color, background: Color) {
         switch viewModel.aiStatus {
         case .ready:
-            return ("已连接", .green, Color.green.opacity(0.12))
+            return (L10n.settingsAIStatusReady, .green, Color.green.opacity(0.12))
         case .connecting:
-            return ("连接中", .orange, Color.orange.opacity(0.12))
+            return (L10n.settingsAIStatusConnecting, .orange, Color.orange.opacity(0.12))
         case .error:
-            return ("错误", .red, Color.red.opacity(0.12))
+            return (L10n.settingsAIStatusError, .red, Color.red.opacity(0.12))
         case .notConfigured:
-            return ("未配置", .orange, Color.orange.opacity(0.12))
+            return (L10n.settingsAIStatusNotConfigured, .orange, Color.orange.opacity(0.12))
         }
     }
 
@@ -242,12 +254,11 @@ public struct ChatView: View {
     }
 
     private var currentConversationSubtitle: String {
-        let prefix = currentConversationType == .group ? "多宠会话" : "单宠会话"
+        let prefix = currentConversationType == .group ? L10n.chatSubtitleGroup : L10n.chatSubtitleSingle
         if viewModel.isCurrentConversationStreaming {
-            return "\(prefix) · 正在回复…"
+            return L10n.chatSubtitleReplying(prefix)
         }
-        let messageCount = viewModel.messages.count
-        return "\(prefix) · \(messageCount) 条消息"
+        return L10n.chatSubtitleMessages(prefix, viewModel.messages.count)
     }
 
     private func updateChatAppearance(translucencyEnabled: Bool, opacity: Double) {
@@ -309,6 +320,8 @@ public struct ChatView: View {
 @MainActor
 private struct ChatMessageSurface: View {
     @Bindable var viewModel: ChatViewModel
+    let onOpenSettings: @MainActor () -> Void
+    let onUsePrompt: @MainActor (String) -> Void
     @State private var lastStreamingScrollAt: Date = .distantPast
     @State private var autoScrollPolicy = ChatAutoScrollPolicy()
     @State private var viewportHeight: CGFloat = 0
@@ -481,7 +494,7 @@ private struct ChatMessageSurface: View {
                 }
 
             VStack(spacing: 6) {
-                Text("开始一段对话")
+                Text(L10n.chatEmptyStart)
                     .font(.title3.weight(.semibold))
                 Text(emptyStateText)
                     .font(.callout)
@@ -489,10 +502,32 @@ private struct ChatMessageSurface: View {
                     .multilineTextAlignment(.center)
             }
 
-            HStack(spacing: 10) {
-                emptyStateChip(title: "总结日程", symbolName: "calendar")
-                emptyStateChip(title: "写一句状态", symbolName: "sparkles")
-                emptyStateChip(title: "陪宠物聊天", symbolName: "pawprint.fill")
+            if case .notConfigured = viewModel.aiStatus {
+                Button(action: onOpenSettings) {
+                    Label(L10n.chatOpenSettings, systemImage: "gearshape")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.borderedProminent)
+            } else {
+                HStack(spacing: 10) {
+                    emptyStateChip(
+                        title: L10n.chatPromptSummarizeSchedule,
+                        prompt: L10n.chatPromptSummarizeScheduleText,
+                        symbolName: "calendar"
+                    )
+                    emptyStateChip(
+                        title: L10n.chatPromptWriteStatus,
+                        prompt: L10n.chatPromptWriteStatusText,
+                        symbolName: "sparkles"
+                    )
+                    emptyStateChip(
+                        title: L10n.chatPromptChatWithPet,
+                        prompt: L10n.chatPromptChatWithPetText,
+                        symbolName: "pawprint.fill"
+                    )
+                }
             }
         }
         .padding(.horizontal, 32)
@@ -505,12 +540,18 @@ private struct ChatMessageSurface: View {
         return L10n.chatEmptyNewConversation
     }
 
-    private func emptyStateChip(title: String, symbolName: String) -> some View {
-        Label(title, systemImage: symbolName)
-            .font(.caption.weight(.medium))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color.black.opacity(0.05), in: Capsule())
+    private func emptyStateChip(title: String, prompt: String, symbolName: String) -> some View {
+        Button {
+            onUsePrompt(prompt)
+        } label: {
+            Label(title, systemImage: symbolName)
+                .font(.caption.weight(.medium))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.accentColor.opacity(0.12), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(prompt)
     }
 }
 

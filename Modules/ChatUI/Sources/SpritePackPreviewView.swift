@@ -7,6 +7,7 @@ import SwiftUI
 public struct SpritePackPreviewView: NSViewRepresentable {
     let packDirectory: URL?
     let previewSize: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public final class Coordinator {
         fileprivate var renderPolicy = SpritePackPreviewRenderPolicy()
@@ -44,7 +45,8 @@ public struct SpritePackPreviewView: NSViewRepresentable {
     func renderIfNeeded(coordinator: Coordinator, render: () -> Void) {
         let configuration = SpritePackPreviewRenderConfiguration(
             packDirectory: packDirectory,
-            previewSize: Double(previewSize)
+            previewSize: Double(previewSize),
+            reduceMotion: reduceMotion
         )
         guard coordinator.renderPolicy.shouldRender(configuration) else {
             return
@@ -62,7 +64,9 @@ public struct SpritePackPreviewView: NSViewRepresentable {
             petScene.loadSpritePack(from: packDirectory)
         }
 
-        petScene.playAnimation(for: previewAnimationState(for: manifest))
+        if !reduceMotion {
+            petScene.playAnimation(for: previewAnimationState(for: manifest))
+        }
         skView.presentScene(petScene)
     }
 

@@ -1,0 +1,10 @@
+{
+  "available_count": 7,
+  "credits": [
+    {"id": "fixture-expired", "status": "available", "expires_at": "2026-01-01T00:00:00Z"},
+    {"id": "fixture-soon", "status": "available", "expires_at": "2026-05-30T12:00:00.125Z"},
+    {"id": "fixture-used", "status": "used", "expires_at": "2026-06-20T00:00:00Z"},
+    {"id": "fixture-later", "status": "available", "expires_at": "2026-06-15T12:00:00Z"},
+    "unreadable credit must not discard siblings"
+  ]
+}

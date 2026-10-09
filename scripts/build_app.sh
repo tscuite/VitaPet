@@ -24,6 +24,34 @@ OUT_DIR="dist"
 APP_BASENAME="${APP_NAME}.app"
 APP_DIR="${OUT_DIR}/${APP_BASENAME}"
 
+# Command Line Tools ship SDKs but not Xcode's macro plugins. Starting with the macOS 27 SDK,
+# SwiftUI's @State/@Binding/... are macros (SwiftUIMacros), so ChatUI cannot compile against
+# that SDK without Xcode. When Xcode is absent and SDKROOT is unset, pick the newest SDK that
+# still declares State as a property wrapper.
+select_sdk_without_xcode() {
+  local dev_dir sdk_dir sdk iface
+  dev_dir="$(xcode-select -p 2>/dev/null || true)"
+  case "$dev_dir" in
+    *Xcode*.app*) return 0 ;;   # Xcode toolchain has the plugins; use its default SDK.
+  esac
+  sdk_dir="${dev_dir}/SDKs"
+  [ -d "$sdk_dir" ] || return 0
+  for sdk in $(ls -d "${sdk_dir}"/MacOSX[0-9]*.sdk 2>/dev/null | sort -rV); do
+    [ -L "$sdk" ] && continue   # skip MacOSX26.sdk -> MacOSX26.5.sdk style aliases
+    iface="${sdk}/System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule/arm64e-apple-macos.swiftinterface"
+    [ -f "$iface" ] || continue
+    if ! grep -q 'public macro State' "$iface"; then
+      export SDKROOT="$sdk"
+      echo "==> No Xcode detected; using SDKROOT=${SDKROOT} (SwiftUI without macro plugins)"
+      return 0
+    fi
+  done
+  echo "warning: no Xcode and every installed SDK requires SwiftUIMacros; the build will likely fail in ChatUI." >&2
+}
+if [ -z "${SDKROOT:-}" ]; then
+  select_sdk_without_xcode
+fi
+
 BUILD_ARGS=(-c release)
 if [ "${VITAPET_BUILD_DISABLE_SANDBOX:-0}" = "1" ]; then
   BUILD_ARGS+=(--disable-sandbox)
@@ -44,6 +72,14 @@ swift build "${BUILD_ARGS[@]}"
 
 BIN_DIR="$(swift build "${BUILD_ARGS[@]}" --show-bin-path)"
 
+# Do not ship credential reads/probes of the user's Keychain, even if noninteractive.
+IMPORTED_SYMBOLS="$(nm -u "${BIN_DIR}/${BIN_NAME}")"
+if grep -Eq '_Sec(Item|Keychain)' <<< "$IMPORTED_SYMBOLS"; then
+  echo 'Refusing to package a binary that imports Keychain credential APIs.' >&2
+  exit 1
+fi
+unset IMPORTED_SYMBOLS
+
 rm -rf "${APP_DIR}"
 mkdir -p "${APP_DIR}/Contents/MacOS"
 mkdir -p "${APP_DIR}/Contents/Resources"
@@ -56,6 +92,7 @@ for bundle in "${BIN_DIR}"/*.bundle; do
   [ -e "$bundle" ] || continue
   cp -R "$bundle" "${APP_DIR}/Contents/Resources/"
 done
+cp THIRD_PARTY_NOTICES.md "${APP_DIR}/Contents/Resources/"
 
 ICON_SRC="App/Resources/AppIcon.icns"
 if [ "${VITAPET_REGENERATE_ICON:-0}" = "1" ]; then
@@ -118,11 +155,25 @@ echo "==> Built ${APP_DIR}"
 # Set INSTALL=0 to only produce dist/ (e.g. CI, or you’ll copy the .app yourself).
 if [ "${INSTALL:-1}" = "1" ]; then
   DEST="/Applications/${APP_BASENAME}"
-  echo "==> Quitting existing ${APP_NAME} (if running)"
-  osascript -e "tell application \"${APP_NAME}\" to quit" 2>/dev/null || true
-  sleep 1
-  killall "${BIN_NAME}" 2>/dev/null || true
-  sleep 0.5
+  if pgrep -x "${BIN_NAME}" >/dev/null; then
+    for pid in $(pgrep -x "${BIN_NAME}"); do
+      case "$(ps -p "$pid" -o comm=)" in
+        "${DEST}/Contents/MacOS/${BIN_NAME}") ;;
+        *) echo "Refusing to replace the app while a development/other instance is running (PID $pid)." >&2; exit 1 ;;
+      esac
+    done
+    echo "==> Asking ${APP_NAME} to quit normally (up to 60s for persistence)"
+    deadline=$(( $(date +%s) + 60 ))
+    osascript -e 'with timeout of 60 seconds' \
+      -e "tell application id \"${BUNDLE_ID}\" to quit" -e 'end timeout' || exit 1
+    while pgrep -x "${BIN_NAME}" >/dev/null && [ "$(date +%s)" -lt "$deadline" ]; do
+      sleep 1
+    done
+  fi
+  if pgrep -x "${BIN_NAME}" >/dev/null; then
+    echo "App did not exit safely; installation stopped. No process was killed." >&2
+    exit 1
+  fi
 
   echo "==> Installing to ${DEST}"
   rm -rf "${DEST}"

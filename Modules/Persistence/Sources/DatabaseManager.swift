@@ -1134,6 +1134,26 @@ public actor DatabaseManager {
         try Self.step(statement, in: database)
     }
 
+    /// 按主键取单条记忆（删除前查 remote_id 用）。
+    public func fetchMemoryRecord(id: Int64) async throws -> MemoryRecord? {
+        let database = try getOrOpenDatabase()
+        let statement = try Self.prepare(
+            """
+            SELECT id, content, category, importance, created_at,
+                   COALESCE(source, 'auto'), remote_id, synced_at
+            FROM ai_memories
+            WHERE id = ?
+            LIMIT 1;
+            """,
+            in: database
+        )
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_bind_int64(statement, 1, id) == SQLITE_OK else {
+            throw Self.sqliteError(in: database)
+        }
+        return try collectMemoryRows(from: statement, database: database).first
+    }
+
     public func clearMemories() async throws {
         let database = try getOrOpenDatabase()
         try Self.execute("DELETE FROM ai_memories;", in: database)

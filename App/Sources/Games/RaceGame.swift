@@ -1,9 +1,10 @@
 import AppKit
+import Localization
 import RenderEngine
 
 @MainActor
 final class RaceGame: MiniGame {
-    let name = "赛跑"
+    var name: String { L10n.gameRace }
     let minPets = 2
     let maxPets = 5
 

@@ -19,6 +19,39 @@ public enum L10n {
     public static var menuQuit: String { tr("menu.quit") }
     public static var menuAddPet: String { tr("menu.add_pet") }
     public static var menuRemovePet: String { tr("menu.remove_pet") }
+    public static var menuStatistics: String { tr("menu.statistics") }
+    public static var menuMiniGames: String { tr("menu.mini_games") }
+    public static var menuNoMiniGames: String { tr("menu.no_mini_games") }
+    public static var menuKeepOnePet: String { tr("menu.keep_one_pet") }
+    public static var menuPomodoro: String { tr("menu.pomodoro") }
+    public static var menuPomodoroIdle: String { tr("menu.pomodoro.idle") }
+    public static var menuPomodoroStart: String { tr("menu.pomodoro.start") }
+    public static var menuPomodoroPause: String { tr("menu.pomodoro.pause") }
+    public static var menuPomodoroResume: String { tr("menu.pomodoro.resume") }
+    public static var menuPomodoroReset: String { tr("menu.pomodoro.reset") }
+    public static var menuPomodoroSkip: String { tr("menu.pomodoro.skip") }
+    public static func menuPomodoroPaused(_ timeText: String) -> String {
+        String(format: tr("menu.pomodoro.paused"), timeText)
+    }
+    public static func menuPomodoroWorking(_ timeText: String) -> String {
+        String(format: tr("menu.pomodoro.working"), timeText)
+    }
+    public static func menuPomodoroBreak(_ timeText: String) -> String {
+        String(format: tr("menu.pomodoro.break"), timeText)
+    }
+    public static func statusMoodHappy(_ happiness: Int) -> String {
+        String(format: tr("status.mood.happy"), happiness)
+    }
+    public static func statusMoodNormal(_ happiness: Int) -> String {
+        String(format: tr("status.mood.normal"), happiness)
+    }
+    public static func statusMoodSad(_ happiness: Int) -> String {
+        String(format: tr("status.mood.sad"), happiness)
+    }
+    public static var gameCatch: String { tr("game.catch") }
+    public static var gameRace: String { tr("game.race") }
+    public static var gameHideAndSeek: String { tr("game.hide_and_seek") }
+    public static var gameRockPaperScissors: String { tr("game.rock_paper_scissors") }
     public static var menuFeedPet: String { tr("menu.feed_pet") }
     public static var menuPlayWithPet: String { tr("menu.play_with_pet") }
     public static var menuPatPet: String { tr("menu.pat_pet") }
@@ -108,6 +141,36 @@ public enum L10n {
     public static var chatSend: String { tr("chat.send") }
     public static var chatEmptyNotConfigured: String { tr("chat.empty.not_configured") }
     public static var chatEmptyNewConversation: String { tr("chat.empty.new_conversation") }
+    public static var chatEmptyStart: String { tr("chat.empty.start") }
+    public static var chatOpenSettings: String { tr("chat.open_settings") }
+    public static var chatPromptSummarizeSchedule: String { tr("chat.prompt.summarize_schedule") }
+    public static var chatPromptSummarizeScheduleText: String { tr("chat.prompt.summarize_schedule.text") }
+    public static var chatPromptWriteStatus: String { tr("chat.prompt.write_status") }
+    public static var chatPromptWriteStatusText: String { tr("chat.prompt.write_status.text") }
+    public static var chatPromptChatWithPet: String { tr("chat.prompt.chat_with_pet") }
+    public static var chatPromptChatWithPetText: String { tr("chat.prompt.chat_with_pet.text") }
+    public static var chatSubtitleGroup: String { tr("chat.subtitle.group") }
+    public static var chatSubtitleSingle: String { tr("chat.subtitle.single") }
+    public static func chatSubtitleReplying(_ prefix: String) -> String {
+        String(format: tr("chat.subtitle.replying"), prefix)
+    }
+    public static func chatSubtitleMessages(_ prefix: String, _ count: Int) -> String {
+        String(format: tr("chat.subtitle.messages"), prefix, count)
+    }
+    public static var chatSidebarTagline: String { tr("chat.sidebar.tagline") }
+    public static func chatSidebarConversationsCount(_ count: Int) -> String {
+        String(format: tr("chat.sidebar.conversations_count"), count)
+    }
+    public static func chatSidebarGroupsCount(_ count: Int) -> String {
+        String(format: tr("chat.sidebar.groups_count"), count)
+    }
+    public static var chatPreviewGroup: String { tr("chat.preview.group") }
+    public static var chatPreviewSingle: String { tr("chat.preview.single") }
+    public static var chatHelpHideThinking: String { tr("chat.help.hide_thinking") }
+    public static var chatHelpShowThinking: String { tr("chat.help.show_thinking") }
+    public static var chatHelpOpacity: String { tr("chat.help.opacity") }
+    public static var chatThinking: String { tr("chat.thinking") }
+    public static var chatCreateGroupHint: String { tr("chat.create_group_hint") }
     public static var chatAssistantNotConfigured: String { tr("chat.assistant.not_configured") }
     public static var chatGroupChatPrompt: String { tr("chat.group_chat_prompt") }
     public static var chatGroupChatPetsHeader: String { tr("chat.group_chat_pets_header") }
@@ -233,7 +296,7 @@ private final class Storage: @unchecked Sendable {
     }
 
     private func loadTable(for locale: String) -> [String: Any]? {
-        guard let url = Self.resourceBundle.url(forResource: locale, withExtension: "json"),
+        guard let url = LocalizationResourceLookup.tableURL(for: locale, in: Self.resourceBundle),
               let data = try? Data(contentsOf: url),
               let object = try? JSONSerialization.jsonObject(with: data),
               let dictionary = object as? [String: Any] else {
@@ -241,6 +304,13 @@ private final class Storage: @unchecked Sendable {
         }
 
         return dictionary
+    }
+}
+
+enum LocalizationResourceLookup {
+    static func tableURL(for locale: String, in bundle: Bundle) -> URL? {
+        bundle.url(forResource: locale, withExtension: "json", subdirectory: "Resources")
+            ?? bundle.url(forResource: locale, withExtension: "json")
     }
 }
 

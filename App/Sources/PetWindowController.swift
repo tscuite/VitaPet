@@ -53,6 +53,7 @@ public final class PetWindowController: NSWindowController {
     var onMoodChange: ((String, String, Int, Int, String) -> Void)?
     var onBehaviorChange: ((String, String, String) -> Void)?
     var onPetClick: ((String, String, String) -> Void)?
+    var onCareRequested: ((CareAction) -> Void)?
     private var bubbleTexts: [String] {
         loadBubbleTexts(key: "bubbleTexts")
     }
@@ -305,7 +306,10 @@ public final class PetWindowController: NSWindowController {
         window.ignoresMouseEvents = false
         window.isMovableByWindowBackground = false
         window.setFrameOrigin(
-            CGPoint(x: petIdentity.positionX, y: petIdentity.positionY)
+            clampedWindowOrigin(
+                CGPoint(x: petIdentity.positionX, y: petIdentity.positionY),
+                for: window
+            )
         )
 
         interactionView.controller = self
@@ -638,7 +642,7 @@ public final class PetWindowController: NSWindowController {
                 }
 
                 self.singleClickWorkItem = workItem
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
+                DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval, execute: workItem)
             }
         }
     }
@@ -703,9 +707,12 @@ public final class PetWindowController: NSWindowController {
         let menu = NSMenu()
         menu.autoenablesItems = false
 
+        menu.addItem(makeContextItem(title: "🏡 \(L10n.tr("home.title"))", action: #selector(PetMenuTarget.home), represented: PetMenuTarget.Action.home))
+        menu.addItem(.separator())
         menu.addItem(makeContextItem(title: "🍖 \(L10n.menuFeedPet)", action: #selector(PetMenuTarget.feed), represented: PetMenuTarget.Action.feed))
         menu.addItem(makeContextItem(title: "🎾 \(L10n.menuPlayWithPet)", action: #selector(PetMenuTarget.play), represented: PetMenuTarget.Action.play))
         menu.addItem(makeContextItem(title: "🤚 \(L10n.menuPatPet)", action: #selector(PetMenuTarget.pat), represented: PetMenuTarget.Action.pat))
+        menu.addItem(makeContextItem(title: "🌙 \(L10n.tr("home.action.rest"))", action: #selector(PetMenuTarget.rest), represented: PetMenuTarget.Action.rest))
         menu.addItem(.separator())
 
         let moodTitle = "❤️ \(L10n.menuPetMood): \(currentMoodLevelValue.emoji) \(currentHappinessValue)"
@@ -736,33 +743,22 @@ public final class PetWindowController: NSWindowController {
 
     private func handleContextMenuAction(_ action: PetMenuTarget.Action) {
         switch action {
-        case .feed:
-            Task {
-                await self.adjustMood(by: 8)
-                await MainActor.run {
-                    self.applyAnimation([.eat, .snack].randomElement() ?? .eat, forceState: false)
-                    self.showBubble(L10n.petContextFeed)
-                }
-            }
-        case .play:
-            Task {
-                await self.adjustMood(by: 5)
-                await MainActor.run {
-                    self.applyAnimation([.play, .spin, .bounce].randomElement() ?? .play, forceState: false)
-                    self.showBubble(L10n.petContextPlay)
-                }
-            }
-        case .pat:
-            Task {
-                await self.adjustMood(by: 3)
-                await MainActor.run {
-                    self.applyAnimation([.nuzzle, .love].randomElement() ?? .nuzzle, forceState: false)
-                    self.showBubble(L10n.petContextPat)
-                }
-            }
-        case .chat:
-            chatController.showChat()
+        case .feed: onCareRequested?(.feed)
+        case .play: onCareRequested?(.play)
+        case .pat: onCareRequested?(.pat)
+        case .rest: onCareRequested?(.rest)
+        case .home: chatController.showCompanionHome(forPetId: petID)
+        case .chat: chatController.showChat(forPetId: petID)
         }
+    }
+
+    func showCareReaction(_ action: CareAction) {
+        guard wantsPetVisible else { return }
+        cancelAutonomousMovement()
+        desktopBehaviorActive = false
+        petScene.resumeRendering()
+        executeAIAction(action.animation)
+        showBubble(L10n.tr("home.response.\(action.rawValue)"))
     }
 
     // MARK: - Hover reaction
@@ -771,9 +767,9 @@ public final class PetWindowController: NSWindowController {
         guard wantsPetVisible else { return }
 
         // 冷却 + 概率，避免来回扫过就一直触发
-        let cooldown: TimeInterval = 18
+        let cooldown: TimeInterval = 8
         guard Date().timeIntervalSince(lastHoverReactionAt) >= cooldown else { return }
-        guard Double.random(in: 0...1) < 0.4 else { return }
+        guard Double.random(in: 0...1) < 0.75 else { return }
 
         // 双击连招播放期间 / 自治行为执行期间不要打断（与 handleMouseDown 的防护一致）
         guard Date() >= animationLockUntil, !isExecutingBehavior else { return }
@@ -1888,7 +1884,7 @@ private extension PetMood.MoodLevel {
 @MainActor
 private final class PetMenuTarget: NSObject {
     enum Action {
-        case feed, play, pat, chat
+        case feed, play, pat, rest, home, chat
     }
 
     static var associatedKey: UInt8 = 0
@@ -1902,6 +1898,8 @@ private final class PetMenuTarget: NSObject {
     @objc func feed(_ sender: NSMenuItem) { handler(.feed) }
     @objc func play(_ sender: NSMenuItem) { handler(.play) }
     @objc func pat(_ sender: NSMenuItem) { handler(.pat) }
+    @objc func rest(_ sender: NSMenuItem) { handler(.rest) }
+    @objc func home(_ sender: NSMenuItem) { handler(.home) }
     @objc func chat(_ sender: NSMenuItem) { handler(.chat) }
 }
 

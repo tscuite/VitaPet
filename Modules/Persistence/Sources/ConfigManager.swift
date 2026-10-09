@@ -31,11 +31,9 @@ public final class ConfigManager {
         public var memoryWorkerEnabled: Bool
         public var memoryWorkerEndpoint: String
         public var memoryWorkerAuthMode: String
-        public var memoryWorkerUsername: String
         public var memoryWorkerSecret: String
         public var memoryWorkerNamespace: String
         public var memoryWorkerScope: String
-        public var memoryWorkerSubject: String
         public var memoryWorkerQueryLimit: Int
         public var memoryWorkerCreateHorizon: String
 
@@ -65,13 +63,11 @@ public final class ConfigManager {
             spaceMode: String = "allSpaces",
             memoryWorkerEnabled: Bool = false,
             memoryWorkerEndpoint: String = "https://memory.example.com",
-            memoryWorkerAuthMode: String = "basic",
-            memoryWorkerUsername: String = "",
+            memoryWorkerAuthMode: String = "signed",
             memoryWorkerSecret: String = "",
             memoryWorkerNamespace: String = "default",
-            memoryWorkerScope: String = "user",
-            memoryWorkerSubject: String = "demo-user",
-            memoryWorkerQueryLimit: Int = 5,
+            memoryWorkerScope: String = "general",
+            memoryWorkerQueryLimit: Int = 50,
             memoryWorkerCreateHorizon: String = "daily"
         ) {
             let resolvedPets = Self.resolvePets(
@@ -109,11 +105,9 @@ public final class ConfigManager {
             self.memoryWorkerEnabled = memoryWorkerEnabled
             self.memoryWorkerEndpoint = memoryWorkerEndpoint
             self.memoryWorkerAuthMode = memoryWorkerAuthMode
-            self.memoryWorkerUsername = memoryWorkerUsername
             self.memoryWorkerSecret = memoryWorkerSecret
             self.memoryWorkerNamespace = memoryWorkerNamespace
             self.memoryWorkerScope = memoryWorkerScope
-            self.memoryWorkerSubject = memoryWorkerSubject
             self.memoryWorkerQueryLimit = Self.clampedMemoryQueryLimit(memoryWorkerQueryLimit)
             self.memoryWorkerCreateHorizon = Self.normalizedMemoryHorizon(memoryWorkerCreateHorizon)
         }
@@ -145,11 +139,9 @@ public final class ConfigManager {
             case memoryWorkerEnabled
             case memoryWorkerEndpoint
             case memoryWorkerAuthMode
-            case memoryWorkerUsername
             case memoryWorkerSecret
             case memoryWorkerNamespace
             case memoryWorkerScope
-            case memoryWorkerSubject
             case memoryWorkerQueryLimit
             case memoryWorkerCreateHorizon
         }
@@ -204,12 +196,10 @@ public final class ConfigManager {
             spaceMode = try container.decodeIfPresent(String.self, forKey: .spaceMode) ?? "allSpaces"
             memoryWorkerEnabled = try container.decodeIfPresent(Bool.self, forKey: .memoryWorkerEnabled) ?? false
             memoryWorkerEndpoint = try container.decodeIfPresent(String.self, forKey: .memoryWorkerEndpoint) ?? "https://memory.example.com"
-            memoryWorkerAuthMode = try container.decodeIfPresent(String.self, forKey: .memoryWorkerAuthMode) ?? "basic"
-            memoryWorkerUsername = try container.decodeIfPresent(String.self, forKey: .memoryWorkerUsername) ?? ""
+            memoryWorkerAuthMode = try container.decodeIfPresent(String.self, forKey: .memoryWorkerAuthMode) ?? "signed"
             memoryWorkerSecret = try container.decodeIfPresent(String.self, forKey: .memoryWorkerSecret) ?? ""
             memoryWorkerNamespace = try container.decodeIfPresent(String.self, forKey: .memoryWorkerNamespace) ?? "default"
-            memoryWorkerScope = try container.decodeIfPresent(String.self, forKey: .memoryWorkerScope) ?? "user"
-            memoryWorkerSubject = try container.decodeIfPresent(String.self, forKey: .memoryWorkerSubject) ?? "demo-user"
+            memoryWorkerScope = try container.decodeIfPresent(String.self, forKey: .memoryWorkerScope) ?? "general"
             memoryWorkerQueryLimit = Self.clampedMemoryQueryLimit(
                 try container.decodeIfPresent(Int.self, forKey: .memoryWorkerQueryLimit) ?? 5
             )

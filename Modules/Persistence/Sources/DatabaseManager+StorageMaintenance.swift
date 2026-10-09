@@ -8,64 +8,88 @@ extension DatabaseManager {
         try Self.truncateWAL(database: database)
     }
 
+    /// Runs one maintenance pass.
+    ///
+    /// Each phase keeps deleting in batches of `maintenanceEventBatchLimit` rows until it is
+    /// drained or the shared row/time budget is exhausted, so a pass can keep up with a busy
+    /// `fileChanged` stream (a single 1 000-row batch per day could never catch up with the
+    /// ~200k rows/day that watching `$HOME` produces). After the transaction commits, free pages
+    /// are returned to the filesystem either incrementally or, when `policy.shouldFullyCompact`
+    /// says the database is mostly free space, with a full `VACUUM`.
     public func performStorageMaintenance(
         now: Date = Date(),
-        excludingEventRollupBatchID: UUID? = nil
+        excludingEventRollupBatchID: UUID? = nil,
+        policy: StoragePolicy = .default,
+        rowBudget: Int = DatabaseManager.maintenanceRowBudget,
+        timeBudget: TimeInterval = DatabaseManager.maintenanceTimeBudget
     ) throws -> StorageMaintenanceReport {
         let maintenanceTime = now.timeIntervalSince1970
         guard maintenanceTime.isFinite else {
             throw StorageMaintenanceSQLiteError(message: "Storage-maintenance time is invalid.")
         }
 
-        let detailCutoff = maintenanceTime - StoragePolicy.default.fileDetailRetention
-        let retentionCutoff = maintenanceTime - StoragePolicy.default.eventRetention
+        let detailCutoff = maintenanceTime - policy.fileDetailRetention
+        let retentionCutoff = maintenanceTime - policy.eventRetention
         let batchMarkerCutoff = maintenanceTime - Self.eventRollupBatchMarkerRetention
         let before = databaseStorageSize()
         let database = try getOrOpenDatabase()
         let runEventIDWatermark = try Self.maximumEventID(database: database)
         let archiveResult = try archiveEligibleConversationTurns(
-            hotLimit: StoragePolicy.default.hotTurnsPerSession,
-            chunkSize: StoragePolicy.default.archiveChunkSize
+            hotLimit: policy.hotTurnsPerSession,
+            chunkSize: policy.archiveChunkSize
         )
 
         var rolledUpEventCount = 0
         var deletedEventCount = 0
         var deletedRollupCount = 0
+        var budget = MaintenanceBudget(rows: rowBudget, deadline: Date().addingTimeInterval(timeBudget))
 
         try Self.maintenanceExecute("BEGIN IMMEDIATE;", database: database)
         do {
             let migrationWatermark = try Self.fileEventMigrationWatermark(database: database)
             let legacyEventWatermark = min(migrationWatermark, runEventIDWatermark)
-            rolledUpEventCount = try Self.backfillFileChanged(
-                detailCutoff: detailCutoff,
-                retentionCutoff: retentionCutoff,
-                watermark: legacyEventWatermark,
-                database: database
-            )
-            deletedEventCount += try Self.deleteAccountedFileChangedDetails(
-                before: detailCutoff,
-                eventIDWatermark: runEventIDWatermark,
-                database: database
-            )
-            deletedEventCount += try Self.deleteOrdinaryEvents(
-                before: retentionCutoff,
-                eventIDWatermark: runEventIDWatermark,
-                database: database
-            )
-            deletedEventCount += try Self.deleteExpiredLegacyFileChangedEvents(
-                before: retentionCutoff,
-                watermark: legacyEventWatermark,
-                database: database
-            )
-            deletedRollupCount = try Self.deleteExpiredHourlyRollups(
-                retentionCutoff: retentionCutoff,
-                database: database
-            )
-            _ = try Self.deleteExpiredEventRollupBatchMarkers(
-                before: batchMarkerCutoff,
-                excluding: excludingEventRollupBatchID,
-                database: database
-            )
+            rolledUpEventCount = try Self.drain(budget: &budget) {
+                try Self.backfillFileChanged(
+                    detailCutoff: detailCutoff,
+                    retentionCutoff: retentionCutoff,
+                    watermark: legacyEventWatermark,
+                    database: database
+                )
+            }
+            deletedEventCount += try Self.drain(budget: &budget) {
+                try Self.deleteAccountedFileChangedDetails(
+                    before: detailCutoff,
+                    eventIDWatermark: runEventIDWatermark,
+                    database: database
+                )
+            }
+            deletedEventCount += try Self.drain(budget: &budget) {
+                try Self.deleteOrdinaryEvents(
+                    before: retentionCutoff,
+                    eventIDWatermark: runEventIDWatermark,
+                    database: database
+                )
+            }
+            deletedEventCount += try Self.drain(budget: &budget) {
+                try Self.deleteExpiredLegacyFileChangedEvents(
+                    before: retentionCutoff,
+                    watermark: legacyEventWatermark,
+                    database: database
+                )
+            }
+            deletedRollupCount = try Self.drain(budget: &budget) {
+                try Self.deleteExpiredHourlyRollups(
+                    retentionCutoff: retentionCutoff,
+                    database: database
+                )
+            }
+            _ = try Self.drain(budget: &budget) {
+                try Self.deleteExpiredEventRollupBatchMarkers(
+                    before: batchMarkerCutoff,
+                    excluding: excludingEventRollupBatchID,
+                    database: database
+                )
+            }
             try Self.refreshFileEventMigrationCompleteMarker(
                 watermark: migrationWatermark,
                 database: database
@@ -85,7 +109,9 @@ extension DatabaseManager {
 
         _ = try promoteOptimizedEventsIndexAfterBoundedMaintenance()
         try Self.truncateWAL(database: database)
-        try Self.runBoundedIncrementalVacuumIfEnabled(database: database)
+        if !(try compactFullyIfBeneficial(policy: policy, database: database)) {
+            try Self.runBoundedIncrementalVacuumIfEnabled(database: database)
+        }
 
         let after = databaseStorageSize()
         return StorageMaintenanceReport(
@@ -97,6 +123,12 @@ extension DatabaseManager {
         )
     }
 
+    /// Maximum rows one maintenance pass may touch (all phases combined).
+    public static let maintenanceRowBudget = 250_000
+    /// Wall-clock cap for one maintenance pass. Checked between batches, so a pass may overrun
+    /// by at most one batch.
+    public static let maintenanceTimeBudget: TimeInterval = 20
+
     private func databaseStorageSize() -> Int64 {
         let databaseURL = maintenanceDatabaseURL()
         return [databaseURL.path, databaseURL.path + "-wal"].reduce(into: 0) { total, path in
@@ -107,6 +139,56 @@ extension DatabaseManager {
             total = overflowed ? Int64.max : next
         }
     }
+
+    /// Rewrites the database file when most of it is free pages. Legacy databases created
+    /// before incremental auto-vacuum was enabled are migrated to `INCREMENTAL` at the same
+    /// time, since `VACUUM` is the only point at which that setting can change.
+    /// Must be called outside a transaction. Returns whether a full compaction ran.
+    private func compactFullyIfBeneficial(policy: StoragePolicy, database: OpaquePointer?) throws -> Bool {
+        let databaseURL = maintenanceDatabaseURL()
+        let pageCount = try Self.maintenanceScalarInt("PRAGMA page_count;", database: database)
+        let freePages = try Self.maintenanceScalarInt("PRAGMA freelist_count;", database: database)
+        let databaseBytes = Self.fileSize(atPath: databaseURL.path)
+        let walBytes = Self.fileSize(atPath: databaseURL.path + "-wal")
+        let availableBytes = Self.availableCapacity(for: databaseURL)
+
+        guard policy.shouldFullyCompact(
+            databaseBytes: databaseBytes,
+            freePages: freePages,
+            pageCount: pageCount,
+            availableBytes: availableBytes,
+            walBytes: walBytes
+        ) else {
+            return false
+        }
+
+        if try Self.maintenanceScalarInt("PRAGMA auto_vacuum;", database: database) != 2 {
+            try Self.maintenanceExecute("PRAGMA auto_vacuum = INCREMENTAL;", database: database)
+        }
+        try Self.maintenanceExecute("VACUUM;", database: database)
+        try Self.truncateWAL(database: database)
+        return true
+    }
+
+    private static func fileSize(atPath path: String) -> Int64 {
+        guard let value = try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber else {
+            return 0
+        }
+        return value.int64Value
+    }
+
+    private static func availableCapacity(for url: URL) -> Int64 {
+        let directory = url.deletingLastPathComponent()
+        if let values = try? directory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
+           let capacity = values.volumeAvailableCapacityForImportantUsage {
+            return capacity
+        }
+        if let values = try? directory.resourceValues(forKeys: [.volumeAvailableCapacityKey]),
+           let capacity = values.volumeAvailableCapacity {
+            return Int64(capacity)
+        }
+        return 0
+    }
 }
 
 private extension DatabaseManager {
@@ -115,6 +197,30 @@ private extension DatabaseManager {
     static let maintenanceMarkerBatchLimit = 1_000
     static let incrementalVacuumPageLimit: Int64 = 256
     static let eventRollupBatchMarkerRetention: TimeInterval = 7 * 86_400
+
+    struct MaintenanceBudget {
+        var rows: Int
+        let deadline: Date
+
+        var isExhausted: Bool { rows <= 0 || Date() >= deadline }
+
+        mutating func consume(_ count: Int) {
+            rows = max(0, rows - count)
+        }
+    }
+
+    /// Repeats `step` (which processes at most one batch and returns the number of rows it
+    /// handled) until it returns 0 or the budget runs out.
+    static func drain(budget: inout MaintenanceBudget, _ step: () throws -> Int) throws -> Int {
+        var total = 0
+        while !budget.isExhausted {
+            let handled = try step()
+            guard handled > 0 else { break }
+            total += handled
+            budget.consume(handled)
+        }
+        return total
+    }
 
     struct LegacyFileEventRow {
         let id: Int64

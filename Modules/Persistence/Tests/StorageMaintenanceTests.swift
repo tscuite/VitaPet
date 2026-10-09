@@ -387,6 +387,143 @@ final class StorageMaintenanceTests: XCTestCase {
         XCTAssertEqual(repeatedClose, .alreadyClosed(previousFailure: nil))
     }
 
+    func testMaintenanceDrainsMoreThanOneBatchPerPass() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directoryURL) }
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let manager = DatabaseManager(databaseURL: fixture.databaseURL)
+        try await manager.initialize()
+        try insertEvents(
+            at: fixture.databaseURL,
+            count: 2_500,
+            timestamp: now.timeIntervalSince1970 - 2 * 86_400,
+            source: "fileChanged",
+            accounted: true
+        )
+        try insertEvents(
+            at: fixture.databaseURL,
+            count: 1_200,
+            timestamp: now.timeIntervalSince1970 - 40 * 86_400,
+            source: "appActivated",
+            accounted: false
+        )
+
+        let report = try await manager.performStorageMaintenance(now: now)
+        await manager.close()
+
+        XCTAssertEqual(report.deletedEventCount, 3_700)
+        XCTAssertEqual(try intScalar("SELECT COUNT(*) FROM events;", at: fixture.databaseURL), 0)
+    }
+
+    func testMaintenanceStopsAtRowBudgetAndFinishesOnNextPass() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directoryURL) }
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let manager = DatabaseManager(databaseURL: fixture.databaseURL)
+        try await manager.initialize()
+        try insertEvents(
+            at: fixture.databaseURL,
+            count: 2_500,
+            timestamp: now.timeIntervalSince1970 - 2 * 86_400,
+            source: "fileChanged",
+            accounted: true
+        )
+
+        let first = try await manager.performStorageMaintenance(now: now, rowBudget: 1_500)
+        // The budget is checked between batches, so a pass may overrun by at most one batch.
+        XCTAssertGreaterThanOrEqual(first.deletedEventCount, 1_500)
+        XCTAssertLessThan(first.deletedEventCount, 2_500)
+
+        let second = try await manager.performStorageMaintenance(now: now)
+        await manager.close()
+
+        XCTAssertEqual(first.deletedEventCount + second.deletedEventCount, 2_500)
+        XCTAssertEqual(try intScalar("SELECT COUNT(*) FROM events;", at: fixture.databaseURL), 0)
+    }
+
+    func testMaintenanceFullyCompactsLegacyDatabaseAndEnablesIncrementalAutoVacuum() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directoryURL) }
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        // A legacy database predates incremental auto-vacuum (auto_vacuum = NONE).
+        try seedLegacyEvents(at: fixture.databaseURL, events: [])
+        XCTAssertEqual(try intScalar("PRAGMA auto_vacuum;", at: fixture.databaseURL), 0)
+        let manager = DatabaseManager(databaseURL: fixture.databaseURL)
+        try await manager.initialize()
+        try insertEvents(
+            at: fixture.databaseURL,
+            count: 3_000,
+            timestamp: now.timeIntervalSince1970 - 2 * 86_400,
+            source: "fileChanged",
+            accounted: true,
+            payload: String(repeating: "x", count: 1_024)
+        )
+        let policy = StoragePolicy(
+            hotTurnsPerSession: 500,
+            archiveChunkSize: 250,
+            fileDetailRetention: 86_400,
+            eventRetention: 2_592_000,
+            flushInterval: 30,
+            maintenanceInterval: 3_600,
+            fullCompactionMinimumBytes: 0,
+            fullCompactionFreeRatio: 0.25,
+            compactionSafetyBytes: 0
+        )
+        let sizeBefore = try fileSize(at: fixture.databaseURL)
+
+        let report = try await manager.performStorageMaintenance(now: now, policy: policy)
+        await manager.close()
+
+        XCTAssertEqual(report.deletedEventCount, 3_000)
+        XCTAssertEqual(try intScalar("PRAGMA auto_vacuum;", at: fixture.databaseURL), 2)
+        XCTAssertEqual(try intScalar("PRAGMA freelist_count;", at: fixture.databaseURL), 0)
+        XCTAssertLessThan(try fileSize(at: fixture.databaseURL), sizeBefore / 4)
+        XCTAssertGreaterThan(report.reclaimedBytes, 0)
+    }
+
+    func testMaintenanceSkipsFullCompactionWhenFreeRatioIsLow() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directoryURL) }
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try seedLegacyEvents(at: fixture.databaseURL, events: [])
+        let manager = DatabaseManager(databaseURL: fixture.databaseURL)
+        try await manager.initialize()
+        // Mostly live rows: only a small fraction becomes free space.
+        try insertEvents(
+            at: fixture.databaseURL,
+            count: 2_000,
+            timestamp: now.timeIntervalSince1970 - 600,
+            source: "fileChanged",
+            accounted: true,
+            payload: String(repeating: "x", count: 1_024)
+        )
+        try insertEvents(
+            at: fixture.databaseURL,
+            count: 50,
+            timestamp: now.timeIntervalSince1970 - 2 * 86_400,
+            source: "fileChanged",
+            accounted: true,
+            payload: String(repeating: "x", count: 1_024)
+        )
+        let policy = StoragePolicy(
+            hotTurnsPerSession: 500,
+            archiveChunkSize: 250,
+            fileDetailRetention: 86_400,
+            eventRetention: 2_592_000,
+            flushInterval: 30,
+            maintenanceInterval: 3_600,
+            fullCompactionMinimumBytes: 0,
+            fullCompactionFreeRatio: 0.25,
+            compactionSafetyBytes: 0
+        )
+
+        let report = try await manager.performStorageMaintenance(now: now, policy: policy)
+        await manager.close()
+
+        XCTAssertEqual(report.deletedEventCount, 50)
+        XCTAssertEqual(try intScalar("PRAGMA auto_vacuum;", at: fixture.databaseURL), 0)
+    }
+
     func testFailedSQLiteCloseRetainsConnectionAndFailureStateForRetry() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directoryURL) }
@@ -511,6 +648,46 @@ private extension StorageMaintenanceTests {
         }
         try step(statement, in: database)
         return sqlite3_last_insert_rowid(database)
+    }
+
+    /// Bulk variant of `insertEvent` that reuses one connection and one transaction.
+    func insertEvents(
+        at databaseURL: URL,
+        count: Int,
+        timestamp: TimeInterval,
+        source: String,
+        accounted: Bool,
+        payload: String = "{}"
+    ) throws {
+        let database = try openDatabase(at: databaseURL)
+        defer { sqlite3_close(database) }
+        try execute("BEGIN IMMEDIATE;", in: database)
+        let statement = try prepare(
+            """
+            INSERT INTO events(timestamp, source, payload, rollup_accounted)
+            VALUES(datetime(?, 'unixepoch'), ?, ?, ?);
+            """,
+            in: database
+        )
+        defer { sqlite3_finalize(statement) }
+        for _ in 0..<count {
+            sqlite3_reset(statement)
+            sqlite3_clear_bindings(statement)
+            try bind(timestamp, at: 1, in: statement, database: database)
+            try bind(source, at: 2, in: statement, database: database)
+            try bind(payload, at: 3, in: statement, database: database)
+            guard sqlite3_bind_int(statement, 4, accounted ? 1 : 0) == SQLITE_OK else {
+                throw TestDatabaseError.statementFailed(errorMessage(from: database))
+            }
+            try step(statement, in: database)
+        }
+        try execute("COMMIT;", in: database)
+    }
+
+    func fileSize(at url: URL) throws -> Int64 {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        guard let size = attributes[.size] as? NSNumber else { throw TestDatabaseError.missingValue }
+        return size.int64Value
     }
 
     func insertRollup(

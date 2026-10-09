@@ -21,6 +21,7 @@ let package = Package(
         .library(name: "FocusMonitor", targets: ["FocusMonitor"]),
         .library(name: "Localization", targets: ["Localization"]),
         .library(name: "ChatUI", targets: ["ChatUI"]),
+        .library(name: "UsageMonitor", targets: ["UsageMonitor"]),
         .library(name: "SecurityLayer", targets: ["SecurityLayer"]),
         .library(name: "Persistence", targets: ["Persistence"]),
         .executable(name: "VitaPetApp", targets: ["VitaPetApp"])
@@ -78,9 +79,17 @@ let package = Package(
             swiftSettings: strictConcurrency
         ),
         .target(
+            name: "UsageMonitor",
+            path: "Modules/UsageMonitor/Sources",
+            swiftSettings: strictConcurrency
+        ),
+        .target(
             name: "ChatUI",
-            dependencies: ["AIEngine", "Localization", "RenderEngine", "EventBus"],
-            path: "Modules/ChatUI/Sources",
+            dependencies: ["AIEngine", "Localization", "RenderEngine", "EventBus", "UsageMonitor"],
+            path: "Modules/ChatUI",
+            exclude: ["Tests"],
+            sources: ["Sources"],
+            resources: [.copy("UsageGlyphs")],
             swiftSettings: strictConcurrency
         ),
         .target(
@@ -90,7 +99,7 @@ let package = Package(
         ),
         .target(
             name: "Persistence",
-            dependencies: ["ChatUI"],
+            dependencies: ["ChatUI", "RenderEngine"],
             path: "Modules/Persistence/Sources",
             swiftSettings: strictConcurrency
         ),
@@ -110,6 +119,7 @@ let package = Package(
                 "FocusMonitor",
                 "Localization",
                 "ChatUI",
+                "UsageMonitor",
                 "SecurityLayer",
                 "Persistence"
             ],

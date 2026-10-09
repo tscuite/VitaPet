@@ -26,6 +26,12 @@ public final class PetScene: SKScene, @unchecked Sendable {
     private var staticRedrawCoordinator = StaticRedrawCoordinator()
     private var animationGeneration: UInt = 0
     private var facingDirection: HorizontalDirection = .right
+    private weak var idleLayer: CALayer?
+    private var idleMagnificationFilter: CALayerContentsFilter = .linear
+    private let idleIntroKey = "RenderEngine.IdleIntro"
+    private let idleBreathingKey = "RenderEngine.IdleBreathing"
+
+    private var redrawWorkload: RenderWorkload { idleLayer == nil ? renderWorkload : .staticFrame }
 
     public init(size: CGSize, manifest: SpriteManifest, resourceBundle: Bundle? = nil) {
         self.manifest = manifest
@@ -54,13 +60,24 @@ public final class PetScene: SKScene, @unchecked Sendable {
         requestStaticRedrawIfNeeded()
     }
 
+    public override func willMove(from view: SKView) {
+        endLayerIdle(resumeEffect: true)
+        super.willMove(from: view)
+    }
+
+    public override func didChangeSize(_ oldSize: CGSize) {
+        super.didChangeSize(oldSize)
+        endLayerIdle(resumeEffect: true)
+        requestStaticRedrawIfNeeded()
+    }
+
     public override func didFinishUpdate() {
         super.didFinishUpdate()
 
         guard let settleToken = staticRedrawCoordinator.didFinishUpdate() else { return }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            let workload = self.renderWorkload
+            let workload = self.redrawWorkload
             let isVisible = self.renderingVisible
             guard self.staticRedrawCoordinator.settle(
                 settleToken,
@@ -96,6 +113,18 @@ public final class PetScene: SKScene, @unchecked Sendable {
         petNode.size = size  // Fill the scene, not the texture's natural size
         animationGeneration &+= 1
         let generation = animationGeneration
+
+        // ponytail: only attached, single-frame idle can reuse a rendered image; other animations keep SpriteKit.
+        if state == .idle, textures.count == 1, let view {
+            view.wantsLayer = true
+            if let layer = view.layer, CATransform3DIsIdentity(layer.transform) {
+                idleLayer = layer
+                idleMagnificationFilter = layer.magnificationFilter
+                layer.magnificationFilter = .nearest
+                setRenderWorkload(.continuous)
+                return
+            }
+        }
 
         let animation = SKAction.animate(
             with: textures,
@@ -781,6 +810,7 @@ public final class PetScene: SKScene, @unchecked Sendable {
     }
 
     private func resetNodeTransform() {
+        endLayerIdle()
         switch facingDirection {
         case .left:
             petNode.xScale = -1
@@ -983,15 +1013,18 @@ public final class PetScene: SKScene, @unchecked Sendable {
     }
 
     public func setRotation(_ angle: CGFloat) {
+        endLayerIdle(resumeEffect: true)
         petNode.zRotation = angle
         requestStaticRedrawIfNeeded()
     }
 
     public func pauseRendering() {
+        endLayerIdle(resumeEffect: true)
         setRenderWorkload(.staticFrame)
     }
 
     public func resumeRendering() {
+        endLayerIdle(resumeEffect: true)
         setRenderWorkload(.continuous)
     }
 
@@ -1021,6 +1054,60 @@ public final class PetScene: SKScene, @unchecked Sendable {
         guard let view else { return }
         view.preferredFramesPerSecond = cadence.framesPerSecond
         view.isPaused = cadence.viewPaused
+        guard let layer = idleLayer else { return }
+        guard layer === view.layer else {
+            endLayerIdle(resumeEffect: true)
+            return
+        }
+        if !renderingVisible {
+            layer.removeAnimation(forKey: idleIntroKey)
+            layer.removeAnimation(forKey: idleBreathingKey)
+        } else if staticRedrawCoordinator.cadenceOverride == nil {
+            // Reuse the completed Metal frame; the compositor animates it at display cadence.
+            if layer.animation(forKey: idleBreathingKey) == nil { addIdleBreathing(to: layer) }
+            isPaused = true
+            view.isPaused = true
+        }
+    }
+
+    private func addIdleBreathing(to layer: CALayer) {
+        let center = (0.5 - layer.anchorPoint.y) * layer.bounds.height
+        func transform(_ scale: CGFloat) -> NSValue {
+            var value = CATransform3DMakeScale(1, scale, 1)
+            value.m42 = center * (1 - scale)
+            return NSValue(caTransform3D: value)
+        }
+        let intro = CABasicAnimation(keyPath: "transform")
+        intro.fromValue = transform(1)
+        intro.toValue = transform(1.06)
+        intro.duration = 1.6
+        intro.timingFunction = CAMediaTimingFunction(name: .linear)
+        intro.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil)
+        let loop = CABasicAnimation(keyPath: "transform")
+        loop.fromValue = intro.toValue
+        loop.toValue = transform(0.98)
+        loop.duration = 1.6
+        loop.autoreverses = true
+        loop.repeatCount = .infinity
+        loop.timingFunction = intro.timingFunction
+        loop.beginTime = intro.beginTime + intro.duration
+        layer.add(intro, forKey: idleIntroKey)
+        layer.add(loop, forKey: idleBreathingKey)
+    }
+
+    private func endLayerIdle(resumeEffect: Bool = false) {
+        guard let layer = idleLayer else { return }
+        let scale = layer.presentation()?.transform.m22 ?? 1
+        layer.removeAnimation(forKey: idleIntroKey)
+        layer.removeAnimation(forKey: idleBreathingKey)
+        layer.magnificationFilter = idleMagnificationFilter
+        idleLayer = nil
+        isPaused = false
+        view?.isPaused = false
+        if resumeEffect {
+            petNode.yScale = scale
+            if let effect = visualEffect(for: .idle) { petNode.run(effect, withKey: effectKey) }
+        }
     }
 
     private func requestStaticRedrawIfNeeded() {
@@ -1030,7 +1117,7 @@ public final class PetScene: SKScene, @unchecked Sendable {
             return
         }
         staticRedrawCoordinator.requestRedraw(
-            for: renderWorkload,
+            for: redrawWorkload,
             isVisible: renderingVisible
         )
         applyRenderCadence()
@@ -1042,6 +1129,7 @@ public final class PetScene: SKScene, @unchecked Sendable {
     }
 
     public func loadSpritePack(from directory: URL?) {
+        endLayerIdle()
         if let directory,
            let manifest = try? SpritePackLoader.loadManifest(from: directory) {
             self.manifest = manifest

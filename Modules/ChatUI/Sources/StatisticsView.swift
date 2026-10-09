@@ -1,4 +1,5 @@
 import Charts
+import Localization
 import SwiftUI
 
 @MainActor
@@ -204,6 +205,7 @@ public struct StatisticsView: View {
         }
         .padding(20)
         .frame(minWidth: 580, minHeight: 520)
+        .navigationTitle(L10n.menuStatistics)
         .task {
             await statisticsViewModel.refresh()
         }

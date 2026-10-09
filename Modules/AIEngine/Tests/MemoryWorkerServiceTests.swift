@@ -92,21 +92,22 @@ final class MemoryWorkerServiceTests: XCTestCase {
         super.tearDown()
     }
 
-    func testQueryMemories_usesBasicAuthAndParsesItems() async throws {
+    func testQueryMemories_usesSignedAuthAndParsesItems() async throws {
         let requestObserved = expectation(description: "query request observed")
 
         MemoryWorkerURLProtocol.install { request in
             XCTAssertEqual(request.url?.absoluteString, "https://memory.example.com/api/memories/query")
             XCTAssertEqual(request.httpMethod, "POST")
 
-            let expectedAuth = "Basic \(Data("tester:demo-pass".utf8).base64EncodedString())"
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), expectedAuth)
+            XCTAssertNotNil(request.value(forHTTPHeaderField: "X-Auth-Timestamp"))
+            XCTAssertNotNil(request.value(forHTTPHeaderField: "X-Auth-Nonce"))
+            let signature = request.value(forHTTPHeaderField: "X-Auth-Signature") ?? ""
+            XCTAssertEqual(signature.count, 64)
 
             let body = try XCTUnwrap(request.bodyDataForTesting())
             let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: body) as? [String: Any])
-            XCTAssertEqual(object["scope"] as? String, "user")
-            XCTAssertEqual(object["subject"] as? String, "demo-user")
-            XCTAssertEqual(object["q"] as? String, "concise")
+            XCTAssertNil(object["scope"] as? String)
+                        XCTAssertEqual(object["q"] as? String, "concise")
             XCTAssertEqual(object["limit"] as? Int, 5)
             requestObserved.fulfill()
 
@@ -136,11 +137,9 @@ final class MemoryWorkerServiceTests: XCTestCase {
             config: MemoryWorkerConfig(
                 enabled: true,
                 endpoint: placeholderMemoryWorkerEndpoint,
-                authMode: .basic,
-                username: "tester",
+                authMode: .signed,
                 secret: "demo-pass",
                 scope: "user",
-                subject: "demo-user",
                 queryLimit: 5
             )
         )
@@ -164,8 +163,7 @@ final class MemoryWorkerServiceTests: XCTestCase {
             let body = try XCTUnwrap(request.bodyDataForTesting())
             let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: body) as? [String: Any])
             XCTAssertEqual(object["scope"] as? String, "user")
-            XCTAssertEqual(object["subject"] as? String, "demo-user")
-            XCTAssertEqual(object["content"] as? String, "User likes pomodoro mode")
+                        XCTAssertEqual(object["content"] as? String, "User likes pomodoro mode")
             XCTAssertEqual(object["horizon"] as? String, "daily")
             requestObserved.fulfill()
 
@@ -193,10 +191,8 @@ final class MemoryWorkerServiceTests: XCTestCase {
                 enabled: true,
                 endpoint: placeholderMemoryWorkerEndpoint,
                 authMode: .bearer,
-                username: "",
                 secret: "demo-bearer",
                 scope: "user",
-                subject: "demo-user"
             )
         )
 
@@ -227,10 +223,8 @@ final class MemoryWorkerServiceTests: XCTestCase {
             config: MemoryWorkerConfig(
                 enabled: true,
                 endpoint: "https://memory.example.com",
-                authMode: .basic,
-                username: "u",
+                authMode: .signed,
                 secret: "p",
-                subject: "s"
             )
         )
 
@@ -261,7 +255,6 @@ final class MemoryWorkerServiceTests: XCTestCase {
                 endpoint: "https://memory.example.com",
                 authMode: .bearer,
                 secret: "t",
-                subject: "s"
             )
         )
 
@@ -286,10 +279,8 @@ final class MemoryWorkerServiceTests: XCTestCase {
             config: MemoryWorkerConfig(
                 enabled: true,
                 endpoint: "https://memory.example.com",
-                authMode: .basic,
-                username: "u",
+                authMode: .signed,
                 secret: "p",
-                subject: "s"
             )
         )
 
@@ -313,10 +304,8 @@ final class MemoryWorkerServiceTests: XCTestCase {
             config: MemoryWorkerConfig(
                 enabled: true,
                 endpoint: "https://memory.example.com",
-                authMode: .basic,
-                username: "u",
+                authMode: .signed,
                 secret: "p",
-                subject: "s"
             )
         )
 
@@ -356,16 +345,184 @@ final class MemoryWorkerServiceTests: XCTestCase {
             config: MemoryWorkerConfig(
                 enabled: true,
                 endpoint: "https://memory.example.com/api/memories/query",
-                authMode: .basic,
-                username: "tester",
+                authMode: .signed,
                 secret: "demo-pass",
                 scope: "user",
-                subject: "demo-user",
                 queryLimit: 5
             )
         )
 
         _ = try await service.queryMemories(q: "test")
         await fulfillment(of: [requestObserved], timeout: 1.0)
+    }
+
+    func testCreateMemory_sendsTargetAndCategoryFields() async throws {
+        let requestObserved = expectation(description: "create with pi model fields observed")
+
+        MemoryWorkerURLProtocol.install { request in
+            XCTAssertEqual(request.url?.absoluteString, "https://memory.example.com/api/memories")
+            XCTAssertEqual(request.httpMethod, "POST")
+
+            let body = try XCTUnwrap(request.bodyDataForTesting())
+            let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(object["target"] as? String, "user")
+            XCTAssertEqual(object["category"] as? String, "preference")
+            XCTAssertEqual(object["failure_reason"] as? String, "wrong flag")
+            XCTAssertEqual((object["metadata"] as? [String: Any])?["importance"] as? String, "2")
+            requestObserved.fulfill()
+
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: 201,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            let payload = Data(
+                """
+                { "item": { "id": 7, "content": "prefer concise", "target": "user", "category": "preference" } }
+                """.utf8
+            )
+            return (response, payload)
+        }
+
+        let service = MemoryWorkerService(
+            config: MemoryWorkerConfig(
+                enabled: true,
+                endpoint: placeholderMemoryWorkerEndpoint,
+                authMode: .signed,
+                secret: "demo-pass",
+                scope: "user",
+            )
+        )
+
+        let item = try await service.createMemory(
+            content: "prefer concise",
+            target: "user",
+            category: "preference",
+            failureReason: "wrong flag",
+            importance: 2
+        )
+        XCTAssertEqual(item.id, 7)
+        XCTAssertEqual(item.target, "user")
+        XCTAssertEqual(item.category, "preference")
+        await fulfillment(of: [requestObserved], timeout: 1.0)
+    }
+
+    func testUpdateMemory_sendsPatchAndOmitsNilFields() async throws {
+        let requestObserved = expectation(description: "patch request observed")
+
+        MemoryWorkerURLProtocol.install { request in
+            XCTAssertEqual(request.url?.absoluteString, "https://memory.example.com/api/memories/12")
+            XCTAssertEqual(request.httpMethod, "PATCH")
+
+            let body = try XCTUnwrap(request.bodyDataForTesting())
+            let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(object["content"] as? String, "updated content")
+            XCTAssertEqual(object["category"] as? String, "preference")
+            // nil 字段不应出现，避免误清服务端分类
+            XCTAssertNil(object["target"])
+            XCTAssertNil(object["tags"])
+            XCTAssertNil(object["failure_reason"])
+            requestObserved.fulfill()
+
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            let payload = Data(
+                """
+                { "item": { "id": 12, "content": "updated content", "category": "preference" } }
+                """.utf8
+            )
+            return (response, payload)
+        }
+
+        let service = MemoryWorkerService(
+            config: MemoryWorkerConfig(
+                enabled: true,
+                endpoint: placeholderMemoryWorkerEndpoint,
+                authMode: .signed,
+                secret: "demo-pass",
+                scope: "user",
+            )
+        )
+
+        let item = try await service.updateMemory(id: 12, content: "updated content", category: "preference")
+        XCTAssertEqual(item?.id, 12)
+        XCTAssertEqual(item?.category, "preference")
+        await fulfillment(of: [requestObserved], timeout: 1.0)
+    }
+
+    func testDeleteMemory_returnsTrueOn200AndFalseOn404() async throws {
+        var statuses: [Int] = []
+        let requestObserved = expectation(description: "delete requests observed")
+        requestObserved.expectedFulfillmentCount = 2
+
+        MemoryWorkerURLProtocol.install { request in
+            XCTAssertEqual(request.httpMethod, "DELETE")
+            let response = HTTPURLResponse(
+                url: try XCTUnwrap(request.url),
+                statusCode: statuses.removeFirst(),
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            requestObserved.fulfill()
+            return (response, Data("{\"deleted\": true}".utf8))
+        }
+
+        let service = MemoryWorkerService(
+            config: MemoryWorkerConfig(
+                enabled: true,
+                endpoint: placeholderMemoryWorkerEndpoint,
+                authMode: .signed,
+                secret: "demo-pass",
+                scope: "user",
+            )
+        )
+
+        statuses = [200]
+        let deleted = try await service.deleteMemory(id: 12)
+        XCTAssertTrue(deleted)
+
+        statuses = [404]
+        let missing = try await service.deleteMemory(id: 12)
+        XCTAssertFalse(missing)
+
+        await fulfillment(of: [requestObserved], timeout: 1.0)
+    }
+
+    func testItemDecoding_parsesPiModelFieldsLoosely() throws {
+        let payload = Data(
+            """
+            {
+              "id": "42",
+              "content": "prefer concise",
+              "target": "user",
+              "category": "preference",
+              "metadata": { "importance": 0.9, "source": "chat" }
+            }
+            """.utf8
+        )
+
+        let item = try JSONDecoder().decode(MemoryWorkerItem.self, from: payload)
+        XCTAssertEqual(item.id, 42)
+        XCTAssertEqual(item.target, "user")
+        XCTAssertEqual(item.category, "preference")
+        XCTAssertEqual(item.importance, 1)
+    }
+
+    func testCategoryMapping_roundTripsPiVocabulary() {
+        XCTAssertEqual(MemoryWorkerService.remoteTargetAndCategory(for: .preference).category, "preference")
+        XCTAssertEqual(MemoryWorkerService.remoteTargetAndCategory(for: .preference).target, "user")
+        XCTAssertEqual(MemoryWorkerService.remoteTargetAndCategory(for: .fact).category, "insight")
+        XCTAssertEqual(MemoryWorkerService.remoteTargetAndCategory(for: .fact).target, "user")
+        XCTAssertEqual(MemoryWorkerService.remoteTargetAndCategory(for: .event).target, "memory")
+
+        XCTAssertEqual(MemoryWorkerService.localCategory(fromRemoteCategory: "preference"), .preference)
+        XCTAssertEqual(MemoryWorkerService.localCategory(fromRemoteCategory: "event"), .event)
+        XCTAssertEqual(MemoryWorkerService.localCategory(fromRemoteCategory: "insight"), .fact)
+        XCTAssertEqual(MemoryWorkerService.localCategory(fromRemoteCategory: nil), .fact)
     }
 }

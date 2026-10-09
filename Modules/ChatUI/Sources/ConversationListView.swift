@@ -25,10 +25,13 @@ struct ConversationListView: View {
                             onSelect(thread.id)
                         }
                         .contextMenu {
-                            if thread.type == .group {
-                                Button(L10n.chatDeleteConversation, role: .destructive) {
-                                    onDelete(thread.id)
-                                }
+                            Button(L10n.chatDeleteConversation, role: .destructive) {
+                                onDelete(thread.id)
+                            }
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(L10n.chatDeleteConversation, role: .destructive) {
+                                onDelete(thread.id)
                             }
                         }
                 }
@@ -90,7 +93,7 @@ struct ConversationListView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("VitaPet")
                         .font(.title3.weight(.semibold))
-                    Text("桌面宠物与本地模型对话")
+                    Text(L10n.chatSidebarTagline)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -99,8 +102,8 @@ struct ConversationListView: View {
             }
 
             HStack(spacing: 8) {
-                metricChip(title: "\(conversations.count) 个会话", symbolName: "bubble.left.and.bubble.right.fill")
-                metricChip(title: "\(groupCount) 个群组", symbolName: "person.3.fill")
+                metricChip(title: L10n.chatSidebarConversationsCount(conversations.count), symbolName: "bubble.left.and.bubble.right.fill")
+                metricChip(title: L10n.chatSidebarGroupsCount(groupCount), symbolName: "person.3.fill")
             }
         }
         .padding(16)
@@ -206,13 +209,13 @@ struct ConversationRow: View {
 
     private var previewText: String {
         if thread.lastMessage.isEmpty {
-            return thread.type == .group ? "与多只宠物一起聊天" : "开始一段新的对话"
+            return thread.type == .group ? L10n.chatPreviewGroup : L10n.chatPreviewSingle
         }
         return thread.lastMessage
     }
 
     private var typeText: String {
-        thread.type == .group ? "群聊" : "私聊"
+        thread.type == .group ? L10n.chatGroupChat : L10n.chatSingleChat
     }
 
     private var timestampText: String {

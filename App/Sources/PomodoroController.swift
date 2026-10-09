@@ -14,6 +14,8 @@ final class PomodoroController {
     private let workDuration = 25 * 60
     private let breakDuration = 5 * 60
 
+    var sessionDuration: Int { state == .breakTime ? breakDuration : workDuration }
+
     var onStateChanged: ((State, Int) -> Void)?
     var getPetControllers: (() -> [PetWindowController])?
 

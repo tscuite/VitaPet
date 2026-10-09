@@ -8,6 +8,7 @@ public struct TabbedChatView: View {
     let availablePets: [(id: UUID, name: String)]
     let chatAppearance: ChatAppearanceSettings
     let onSaveChatAppearance: @MainActor (Bool, Double) -> Void
+    let onOpenSettings: @MainActor () -> Void
 
     @State private var showCreateGroup = false
 
@@ -15,12 +16,14 @@ public struct TabbedChatView: View {
         viewModel: ChatViewModel,
         availablePets: [(id: UUID, name: String)] = [],
         chatAppearance: ChatAppearanceSettings = ChatAppearanceSettings(),
-        onSaveChatAppearance: @escaping @MainActor (Bool, Double) -> Void = { _, _ in }
+        onSaveChatAppearance: @escaping @MainActor (Bool, Double) -> Void = { _, _ in },
+        onOpenSettings: @escaping @MainActor () -> Void = {}
     ) {
         self.viewModel = viewModel
         self.availablePets = availablePets
         self.chatAppearance = chatAppearance
         self.onSaveChatAppearance = onSaveChatAppearance
+        self.onOpenSettings = onOpenSettings
     }
 
     public var body: some View {
@@ -44,7 +47,8 @@ public struct TabbedChatView: View {
                 ChatView(
                     viewModel: viewModel,
                     chatAppearance: chatAppearance,
-                    onSaveChatAppearance: onSaveChatAppearance
+                    onSaveChatAppearance: onSaveChatAppearance,
+                    onOpenSettings: onOpenSettings
                 )
             } else {
                 emptyDetailState
@@ -84,7 +88,7 @@ public struct TabbedChatView: View {
                 .frame(width: 92, height: 92)
 
                 VStack(spacing: 6) {
-                    Text("选择一个会话")
+                    Text(L10n.chatEmptyStart)
                         .font(.title2.weight(.semibold))
                     Text(L10n.chatNoConversation)
                         .font(.body)
@@ -135,7 +139,7 @@ struct CreateGroupView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(L10n.chatCreateGroup)
                         .font(.title3.weight(.semibold))
-                    Text("把多只宠物放进同一个会话里。")
+                    Text(L10n.chatCreateGroupHint)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }

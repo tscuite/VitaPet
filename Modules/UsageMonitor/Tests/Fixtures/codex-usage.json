@@ -1,0 +1,19 @@
+{
+  "plan_type": "plus",
+  "rate_limit": {
+    "primary_window": {"used_percent": 9.5, "limit_window_seconds": 18000, "reset_at": 1780003660},
+    "secondary_window": {"used_percent": 99.6, "limit_window_seconds": 604800, "reset_after_seconds": 270000}
+  },
+  "additional_rate_limits": [
+    {"limit_name": "GPT-5.3-Codex-Spark", "rate_limit": {
+      "primary_window": {"used_percent": 0.03, "limit_window_seconds": 18000, "reset_after_seconds": 3600},
+      "secondary_window": {"used_percent": 42, "limit_window_seconds": 604800, "reset_after_seconds": 180000}
+    }},
+    {"limit_name": "Spark", "rate_limit": {"primary_window": {"used_percent": 99, "limit_window_seconds": 18000}}},
+    {"limit_name": "Unrelated feature", "rate_limit": {"primary_window": {"used_percent": 88}}}
+  ],
+  "code_review_rate_limit": {
+    "primary_window": {"used_percent": 12.2, "limit_window_seconds": 3600, "reset_after_seconds": 1800},
+    "secondary_window": {"used_percent": 102.5, "limit_window_seconds": 604800, "reset_after_seconds": 270000}
+  }
+}

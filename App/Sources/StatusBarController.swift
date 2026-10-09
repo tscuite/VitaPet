@@ -37,9 +37,17 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let addPetMenuItem = NSMenuItem()
     private let toggleMenuItem = NSMenuItem()
-    private let miniGamesMenuItem = NSMenuItem(title: "小游戏", action: nil, keyEquivalent: "")
-    private let pomodoroMenuItem = NSMenuItem(title: "番茄钟", action: nil, keyEquivalent: "")
+    private let miniGamesMenuItem = NSMenuItem(title: L10n.menuMiniGames, action: nil, keyEquivalent: "")
+    private let pomodoroMenuItem = NSMenuItem(title: L10n.menuPomodoro, action: nil, keyEquivalent: "")
     private let petSizeMenuItem = NSMenuItem(title: L10n.menuPetSize, action: nil, keyEquivalent: "")
+    private var usageIsVisible: (@MainActor () -> Bool)?
+    private var usageCanRefresh: (@MainActor () -> Bool)?
+    private var usageToggle: (@MainActor () -> Void)?
+    private var usageRefresh: (@MainActor () -> Void)?
+    private var usageSettings: (@MainActor () -> Void)?
+    private var usageLook: (@MainActor () -> Void)?
+    private let usageToggleMenuItem = NSMenuItem()
+    private let usageRefreshMenuItem = NSMenuItem()
     private var cachedMiniGameNames: [String]?
     #if DEBUG
     private var cachedDebugBehaviorNames: [String]?
@@ -69,9 +77,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         listPets: @escaping @MainActor () -> [(id: UUID, name: String)],
         pomodoroMenuState: @escaping @MainActor () -> PomodoroMenuState = {
             PomodoroMenuState(
-                statusText: "未开始",
+                statusText: L10n.menuPomodoroIdle,
                 startEnabled: true,
-                pauseTitle: "暂停",
+                pauseTitle: L10n.menuPomodoroPause,
                 pauseEnabled: false,
                 resetEnabled: false,
                 skipEnabled: false
@@ -114,6 +122,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         configureMenu()
     }
 
+    func menuWillOpen(_ menu: NSMenu) { usageLook?() }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
         updateToggleTitle()
         updatePetSizeMenuState()
@@ -121,10 +131,48 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         updateRemovePetMenu(in: menu)
         updateMiniGamesMenu(in: menu)
         updatePomodoroMenu()
+        updateUsageMenu()
         #if DEBUG
         updateDebugMenu(in: menu)
         #endif
         refreshMoodTooltip()
+    }
+
+    func configureUsageBar(
+        isVisible: @escaping @MainActor () -> Bool,
+        canRefresh: @escaping @MainActor () -> Bool,
+        toggle: @escaping @MainActor () -> Void,
+        refresh: @escaping @MainActor () -> Void,
+        settings: @escaping @MainActor () -> Void,
+        onLook: @escaping @MainActor () -> Void = {}
+    ) {
+        usageIsVisible = isVisible
+        usageCanRefresh = canRefresh
+        usageToggle = toggle
+        usageRefresh = refresh
+        usageSettings = settings
+        usageLook = onLook
+        updateUsageMenu()
+    }
+
+    private func updateUsageMenu() {
+        let visible = usageIsVisible?() ?? false
+        usageToggleMenuItem.title = visible ? L10n.tr("usage.menu.hide") : L10n.tr("usage.menu.show")
+        usageToggleMenuItem.state = visible ? .on : .off
+        usageRefreshMenuItem.isEnabled = usageCanRefresh?() ?? false
+    }
+
+    @objc private func toggleUsageBar() {
+        usageToggle?()
+        updateUsageMenu()
+    }
+
+    @objc private func refreshUsageBar() { usageRefresh?() }
+    @objc private func openUsageSettings() { usageSettings?() }
+
+    @objc
+    private func openCompanionHome() {
+        chatController.showCompanionHome()
     }
 
     @objc
@@ -187,10 +235,28 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
 
+        addMenuItem(to: menu, title: L10n.tr("home.title"), symbolName: "house", action: #selector(openCompanionHome), keyEquivalent: "1")
         addMenuItem(to: menu, title: L10n.menuChat, symbolName: "bubble.left", action: #selector(openChat))
         addMenuItem(to: menu, title: L10n.menuSettings, symbolName: "gearshape", action: #selector(openSettings), keyEquivalent: ",")
         addMenuItem(to: menu, title: L10n.menuActivityLog, symbolName: "list.bullet.rectangle", action: #selector(openActivityLog))
-        addMenuItem(to: menu, title: "数据统计", symbolName: "chart.bar", action: #selector(openStatistics))
+        addMenuItem(to: menu, title: L10n.menuStatistics, symbolName: "chart.bar", action: #selector(openStatistics))
+
+        let usageItem = NSMenuItem(title: L10n.tr("usage.menu.title"), action: nil, keyEquivalent: "")
+        usageItem.image = NSImage(systemSymbolName: "gauge.with.dots.needle.50percent", accessibilityDescription: nil)
+        let usageMenu = NSMenu(title: usageItem.title)
+        usageMenu.autoenablesItems = false
+        usageMenu.delegate = self
+        usageToggleMenuItem.target = self
+        usageToggleMenuItem.action = #selector(toggleUsageBar)
+        usageMenu.addItem(usageToggleMenuItem)
+        usageRefreshMenuItem.title = L10n.tr("usage.menu.refresh")
+        usageRefreshMenuItem.target = self
+        usageRefreshMenuItem.action = #selector(refreshUsageBar)
+        usageMenu.addItem(usageRefreshMenuItem)
+        addMenuItem(to: usageMenu, title: L10n.tr("usage.menu.settings"), symbolName: "gearshape", action: #selector(openUsageSettings))
+        usageItem.submenu = usageMenu
+        menu.addItem(usageItem)
+        updateUsageMenu()
 
         menu.addItem(.separator())
 
@@ -211,7 +277,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.addItem(removePetItem)
 
         miniGamesMenuItem.image = NSImage(systemSymbolName: "gamecontroller", accessibilityDescription: nil)
-        miniGamesMenuItem.submenu = NSMenu(title: "小游戏")
+        miniGamesMenuItem.submenu = NSMenu(title: L10n.menuMiniGames)
         miniGamesMenuItem.tag = 997
         menu.addItem(miniGamesMenuItem)
 
@@ -247,17 +313,17 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         let games = availableMiniGames?() ?? []
         if cachedMiniGameNames == games, gameItem.submenu != nil {
-            gameItem.isEnabled = !games.isEmpty
+            gameItem.isEnabled = true
             return
         }
 
         cachedMiniGameNames = games
-        let submenu = NSMenu(title: "小游戏")
+        let submenu = NSMenu(title: L10n.menuMiniGames)
         if games.isEmpty {
-            let item = NSMenuItem(title: "暂无可用小游戏", action: nil, keyEquivalent: "")
+            let item = NSMenuItem(title: L10n.menuNoMiniGames, action: nil, keyEquivalent: "")
             item.isEnabled = false
             submenu.addItem(item)
-            gameItem.isEnabled = false
+            gameItem.isEnabled = true
         } else {
             for game in games {
                 let item = NSMenuItem(title: game, action: #selector(startMiniGame(_:)), keyEquivalent: "")
@@ -272,17 +338,17 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     private func makePomodoroMenu() -> NSMenu {
-        let menu = NSMenu(title: "番茄钟")
+        let menu = NSMenu(title: L10n.menuPomodoro)
 
         // Read-only header that reflects the current timer phase + remaining time.
-        let statusHeader = NSMenuItem(title: "未开始", action: nil, keyEquivalent: "")
+        let statusHeader = NSMenuItem(title: L10n.menuPomodoroIdle, action: nil, keyEquivalent: "")
         statusHeader.isEnabled = false
         menu.addItem(statusHeader)
 
-        menu.addItem(NSMenuItem(title: "开始", action: #selector(startPomodoro), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "暂停", action: #selector(pauseOrResumePomodoro), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "重置", action: #selector(resetPomodoro), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "跳过", action: #selector(skipPomodoro), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.menuPomodoroStart, action: #selector(startPomodoro), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.menuPomodoroPause, action: #selector(pauseOrResumePomodoro), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.menuPomodoroReset, action: #selector(resetPomodoro), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.menuPomodoroSkip, action: #selector(skipPomodoro), keyEquivalent: ""))
 
         // The status header has no action; wire targets only on the action items.
         for item in menu.items where item.action != nil {
@@ -351,7 +417,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         guard let removePetItem = menu.items.first(where: { $0.tag == 999 }) else { return }
         let pets = listPets()
         let submenu = NSMenu(title: L10n.menuRemovePet)
-        // Only allow removal if more than 1 pet
         if pets.count > 1 {
             for pet in pets {
                 let item = NSMenuItem(title: pet.name, action: #selector(removePetMenuAction(_:)), keyEquivalent: "")
@@ -359,6 +424,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
                 item.representedObject = pet.id
                 submenu.addItem(item)
             }
+        } else {
+            let item = NSMenuItem(title: L10n.menuKeepOnePet, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            submenu.addItem(item)
         }
         removePetItem.submenu = submenu
         removePetItem.isEnabled = pets.count > 1
@@ -574,11 +643,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private func tooltip(for level: PetMood.MoodLevel, happiness: Int) -> String {
         switch level {
         case .happy:
-            return "😊 心情很好 (\(happiness))"
+            return L10n.statusMoodHappy(happiness)
         case .normal:
-            return "😐 心情平静 (\(happiness))"
+            return L10n.statusMoodNormal(happiness)
         case .sad:
-            return "😢 心情低落 (\(happiness))"
+            return L10n.statusMoodSad(happiness)
         }
     }
 }

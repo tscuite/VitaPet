@@ -1,9 +1,10 @@
 import AppKit
+import Localization
 import RenderEngine
 
 @MainActor
 final class HideAndSeekGame: MiniGame {
-    let name = "躲猫猫"
+    var name: String { L10n.gameHideAndSeek }
     let minPets = 2
     let maxPets = 5
 

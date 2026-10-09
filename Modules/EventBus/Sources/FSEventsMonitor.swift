@@ -4,19 +4,30 @@ import Foundation
 public actor FSEventsMonitor: EventSource {
     public let sourceId: String
 
+    /// Directory names that are pure build/cache noise for a desktop pet and would otherwise
+    /// dominate the event stream (hundreds of thousands of rows per day when watching `$HOME`).
+    public static let defaultExcludedPathComponents: Set<String> = [
+        "node_modules", "target", "build", "dist", ".build", "DerivedData", "Pods",
+        "venv", ".venv", "__pycache__", ".git", ".Trash", ".cache", ".npm", ".gradle",
+        ".local", ".cargo", ".rustup", ".pyenv", ".rbenv", ".m2", ".docker", ".kube",
+    ]
+
     private final class CallbackContext: @unchecked Sendable {
         let eventBus: EventBus
         let excludedRoots: [String]
+        let excludedPathComponents: Set<String>
         let publicationTracker = EventPublicationTracker()
 
-        init(eventBus: EventBus, excludedRoots: [String]) {
+        init(eventBus: EventBus, excludedRoots: [String], excludedPathComponents: Set<String>) {
             self.eventBus = eventBus
             self.excludedRoots = excludedRoots
+            self.excludedPathComponents = excludedPathComponents
         }
     }
 
     private let paths: [String]
     private let excludedRoots: [String]
+    private let excludedPathComponents: Set<String>
     private let latency: CFTimeInterval
     private let queue: DispatchQueue
     private var streamRef: FSEventStreamRef?
@@ -43,7 +54,11 @@ public actor FSEventsMonitor: EventSource {
                 .standardizedFileURL
                 .resolvingSymlinksInPath()
                 .path
-            guard !context.excludedRoots.contains(where: { normalizedPath == $0 || normalizedPath.hasPrefix($0 + "/") }) else {
+            guard !FSEventsMonitor.isExcluded(
+                normalizedPath,
+                roots: context.excludedRoots,
+                components: context.excludedPathComponents
+            ) else {
                 continue
             }
 
@@ -60,9 +75,14 @@ public actor FSEventsMonitor: EventSource {
         }
     }
 
+    /// - Parameters:
+    ///   - excludedRoots: absolute directories whose whole subtree is ignored.
+    ///   - excludedPathComponents: directory names ignored wherever they appear in a path
+    ///     (e.g. `node_modules`, `.git`). Pass `[]` to disable.
     public init(
         paths: [String],
         excludedRoots: [String] = [],
+        excludedPathComponents: Set<String> = FSEventsMonitor.defaultExcludedPathComponents,
         latency: CFTimeInterval = 0.5,
         sourceId: String = "fsEvents",
         queue: DispatchQueue? = nil
@@ -79,6 +99,7 @@ public actor FSEventsMonitor: EventSource {
                 .resolvingSymlinksInPath()
                 .path
         }
+        self.excludedPathComponents = excludedPathComponents
         self.latency = latency
         self.sourceId = sourceId
         self.queue = queue ?? DispatchQueue(label: "vitapet.fs-events-monitor")
@@ -89,7 +110,11 @@ public actor FSEventsMonitor: EventSource {
             return
         }
 
-        let context = CallbackContext(eventBus: eventBus, excludedRoots: excludedRoots)
+        let context = CallbackContext(
+            eventBus: eventBus,
+            excludedRoots: excludedRoots,
+            excludedPathComponents: excludedPathComponents
+        )
         let contextPointer = Unmanaged.passRetained(context).toOpaque()
         callbackContext = contextPointer
 
@@ -147,6 +172,16 @@ public actor FSEventsMonitor: EventSource {
         FSEventStreamRelease(streamRef)
         self.streamRef = nil
         await drainAndReleaseContextIfNeeded()
+    }
+
+    /// Exposed for tests; `path` must already be normalized.
+    static func isExcluded(_ path: String, roots: [String], components: Set<String>) -> Bool {
+        if roots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
+            return true
+        }
+        guard !components.isEmpty else { return false }
+        return path.split(separator: "/", omittingEmptySubsequences: true)
+            .contains { components.contains(String($0)) }
     }
 
     private func publicationTrackerIfPresent() -> EventPublicationTracker? {

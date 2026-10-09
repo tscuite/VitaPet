@@ -11,6 +11,7 @@ public final class ChatWindowController: NSWindowController {
     private let activityLogViewModel: ActivityLogViewModel
     private let statisticsViewModel: StatisticsViewModel
     private let contentContainer: NSView
+    private var makeCompanionHome: (@MainActor (UUID?) -> CompanionHomeView)?
     private lazy var chatHostingSurface = ReusableHostingSurface<
         TabbedChatView,
         NSHostingView<TabbedChatView>
@@ -51,17 +52,15 @@ public final class ChatWindowController: NSWindowController {
     private var aiSystemPrompt: @MainActor () -> String = { "" }
     private var memoryWorkerEnabled: @MainActor () -> Bool = { false }
     private var memoryWorkerEndpoint: @MainActor () -> String = { "https://memory.example.com" }
-    private var memoryWorkerAuthMode: @MainActor () -> String = { "basic" }
-    private var memoryWorkerUsername: @MainActor () -> String = { "" }
+    private var memoryWorkerAuthMode: @MainActor () -> String = { "signed" }
     private var memoryWorkerSecret: @MainActor () -> String = { "" }
-    private var memoryWorkerScope: @MainActor () -> String = { "user" }
-    private var memoryWorkerSubject: @MainActor () -> String = { "demo-user" }
-    private var memoryWorkerQueryLimit: @MainActor () -> Int = { 5 }
+    private var memoryWorkerScope: @MainActor () -> String = { "general" }
+    private var memoryWorkerQueryLimit: @MainActor () -> Int = { 50 }
     private var onTestConnection: @MainActor () -> Void = {}
     private var onTestAIMemoryConnection: @MainActor () async -> String? = { nil }
     private var onTestAIMemoryWrite: @MainActor () async -> String? = { nil }
     private var onSaveAIConfig: @MainActor (String, String, String, AIEngine.AIBackend, String, String) -> String? = { _, _, _, _, _, _ in nil }
-    private var onSaveAIMemoryConfig: @MainActor (Bool, String, String, String, String, String, String, Int) -> Void = { _, _, _, _, _, _, _, _ in }
+    private var onSaveAIMemoryConfig: @MainActor (Bool, String, String, String, String, Int) -> Void = { _, _, _, _, _, _ in }
     private var githubToken: @MainActor () -> String = { "" }
     private var webhookEnabled: @MainActor () -> Bool = { false }
     private var webhookPort: @MainActor () -> Int = { 19280 }
@@ -136,6 +135,7 @@ public final class ChatWindowController: NSWindowController {
             statisticsViewModel: statisticsViewModel
         )
         shouldCascadeWindows = true
+        configureToolbar()
     }
 
     private init(
@@ -159,8 +159,22 @@ public final class ChatWindowController: NSWindowController {
         nil
     }
 
-    public func showChat() {
-        window?.title = "VitaPet Chat"
+    public func configureCompanionHome(_ makeContent: @escaping @MainActor (UUID?) -> CompanionHomeView) {
+        makeCompanionHome = makeContent
+    }
+
+    public func showCompanionHome(forPetId petId: UUID? = nil) {
+        guard let makeCompanionHome else { return }
+        window?.title = "VitaPet"
+        displayContentView(NSHostingView(rootView: makeCompanionHome(petId)))
+        orderFrontWindow(selecting: .vitapetHome)
+    }
+
+    public func showChat(forPetId petId: UUID? = nil) {
+        if let petId {
+            chatViewModel.selectConversation("single_\(petId.uuidString)")
+        }
+        window?.title = "VitaPet"
         // Keep the title bar opaque so SwiftUI's NavigationSplitView doesn't render its toolbar
         // region on top of the scrollable chat content (otherwise messages appear to bleed into
         // the titlebar area when scrolling).
@@ -176,28 +190,22 @@ public final class ChatWindowController: NSWindowController {
                 chatAppearance: currentChatAppearanceSettings(),
                 onSaveChatAppearance: { [weak self] enabled, opacity in
                     self?.saveAndApplyChatAppearance(enabled: enabled, opacity: opacity)
+                },
+                onOpenSettings: { [weak self] in
+                    self?.showSettings()
                 }
             )
         }
         displayContentView(chatContentView)
-        applyChatWindowAppearance()
         if let window, window.frame.width < 760 {
             window.setContentSize(NSSize(width: 860, height: 640))
             window.center()
         }
-        // Float briefly to ensure chat pops above other apps on launch, then
-        // drop back to normal level so it can be covered like any other window.
-        window?.level = .floating
-        showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            self?.window?.level = .normal
-        }
+        orderFrontWindow(selecting: .vitapetChat)
     }
 
     public func showSettings() {
-        window?.title = "VitaPet 设置"
+        window?.title = "VitaPet"
         let settingsRevision = settingsSurfaceRevision.value
         let settingsContentView = settingsHostingSurface.resolve {
             VersionedHostingRoot(
@@ -256,10 +264,8 @@ public final class ChatWindowController: NSWindowController {
                     memoryWorkerEnabled: memoryWorkerEnabled(),
                     memoryWorkerEndpoint: memoryWorkerEndpoint(),
                     memoryWorkerAuthMode: memoryWorkerAuthMode(),
-                    memoryWorkerUsername: memoryWorkerUsername(),
                     memoryWorkerSecret: memoryWorkerSecret(),
                     memoryWorkerScope: memoryWorkerScope(),
-                    memoryWorkerSubject: memoryWorkerSubject(),
                     memoryWorkerQueryLimit: memoryWorkerQueryLimit(),
                     githubToken: githubToken(),
                     webhookEnabled: webhookEnabled(),
@@ -314,14 +320,7 @@ public final class ChatWindowController: NSWindowController {
             )
         }
         displayContentView(settingsContentView)
-        applyChatWindowAppearance()
-        window?.level = .floating
-        showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            self?.window?.level = .normal
-        }
+        orderFrontWindow(selecting: .vitapetSettings)
     }
 
     public func showSpritePackCreator(initialFrames: [String: [URL]] = [:]) {
@@ -345,27 +344,25 @@ public final class ChatWindowController: NSWindowController {
             )
         )
         displayContentView(contentView)
-        applyChatWindowAppearance()
-        showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
+        orderFrontWindow(selecting: .vitapetSettings)
     }
 
     public func showActivityLog() {
-        window?.title = "VitaPet Activity Log"
-        let contentView = NSHostingView(rootView: ActivityLogView(activityLogViewModel: activityLogViewModel))
+        window?.title = "VitaPet"
+        let contentView = NSHostingView(rootView: NavigationStack {
+            ActivityLogView(activityLogViewModel: activityLogViewModel)
+        })
         displayContentView(contentView)
-        applyChatWindowAppearance()
-        showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
+        orderFrontWindow(selecting: .vitapetActivity)
     }
 
     public func showStatistics() {
-        window?.title = "VitaPet Statistics"
-        let contentView = NSHostingView(rootView: StatisticsView(statisticsViewModel: statisticsViewModel))
+        window?.title = "VitaPet"
+        let contentView = NSHostingView(rootView: NavigationStack {
+            StatisticsView(statisticsViewModel: statisticsViewModel)
+        })
         displayContentView(contentView)
-        applyChatWindowAppearance()
-        showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
+        orderFrontWindow(selecting: .vitapetStatistics)
     }
 
     public func configureSpritePackManagement(
@@ -432,18 +429,16 @@ public final class ChatWindowController: NSWindowController {
         aiSystemPrompt: @escaping @MainActor () -> String,
         memoryWorkerEnabled: @escaping @MainActor () -> Bool = { false },
         memoryWorkerEndpoint: @escaping @MainActor () -> String = { "https://memory.example.com" },
-        memoryWorkerAuthMode: @escaping @MainActor () -> String = { "basic" },
-        memoryWorkerUsername: @escaping @MainActor () -> String = { "" },
+        memoryWorkerAuthMode: @escaping @MainActor () -> String = { "signed" },
         memoryWorkerSecret: @escaping @MainActor () -> String = { "" },
-        memoryWorkerScope: @escaping @MainActor () -> String = { "user" },
-        memoryWorkerSubject: @escaping @MainActor () -> String = { "demo-user" },
-        memoryWorkerQueryLimit: @escaping @MainActor () -> Int = { 5 },
+        memoryWorkerScope: @escaping @MainActor () -> String = { "general" },
+        memoryWorkerQueryLimit: @escaping @MainActor () -> Int = { 50 },
         aiStatus: @escaping @MainActor () -> AIEngineStatus,
         onTestConnection: @escaping @MainActor () -> Void = {},
         onTestAIMemoryConnection: @escaping @MainActor () async -> String? = { nil },
         onTestAIMemoryWrite: @escaping @MainActor () async -> String? = { nil },
         onSaveAIConfig: @escaping @MainActor (String, String, String, AIEngine.AIBackend, String, String) -> String? = { _, _, _, _, _, _ in nil },
-        onSaveAIMemoryConfig: @escaping @MainActor (Bool, String, String, String, String, String, String, Int) -> Void = { _, _, _, _, _, _, _, _ in }
+        onSaveAIMemoryConfig: @escaping @MainActor (Bool, String, String, String, String, Int) -> Void = { _, _, _, _, _, _ in }
     ) {
         self.aiEndpoint = aiEndpoint
         self.aiBackend = aiBackend
@@ -454,10 +449,8 @@ public final class ChatWindowController: NSWindowController {
         self.memoryWorkerEnabled = memoryWorkerEnabled
         self.memoryWorkerEndpoint = memoryWorkerEndpoint
         self.memoryWorkerAuthMode = memoryWorkerAuthMode
-        self.memoryWorkerUsername = memoryWorkerUsername
         self.memoryWorkerSecret = memoryWorkerSecret
         self.memoryWorkerScope = memoryWorkerScope
-        self.memoryWorkerSubject = memoryWorkerSubject
         self.memoryWorkerQueryLimit = memoryWorkerQueryLimit
         self.aiStatus = aiStatus
         self.onTestConnection = onTestConnection
@@ -659,6 +652,89 @@ public final class ChatWindowController: NSWindowController {
         settingsHostingSurface.invalidate()
     }
 
+    private func configureToolbar() {
+        guard let window, window.toolbar == nil else {
+            return
+        }
+
+        let toolbar = NSToolbar(identifier: "VitaPet.Window")
+        toolbar.delegate = self
+        toolbar.displayMode = .iconAndLabel
+        toolbar.allowsUserCustomization = false
+        toolbar.autosavesConfiguration = false
+        toolbar.selectedItemIdentifier = .vitapetChat
+        window.toolbar = toolbar
+    }
+
+    private func orderFrontWindow(selecting toolbarItem: NSToolbarItem.Identifier) {
+        window?.toolbar?.selectedItemIdentifier = toolbarItem
+        applyChatWindowAppearance()
+        ensureWindowIsOnScreen()
+        window?.level = .floating
+        showWindow(nil)
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            self?.window?.level = .normal
+        }
+    }
+
+    private func ensureWindowIsOnScreen() {
+        guard let window else {
+            return
+        }
+
+        let frame = window.frame
+        let isVisible = NSScreen.screens.contains { screen in
+            screen.visibleFrame.intersects(frame)
+        }
+        if !isVisible {
+            window.center()
+        }
+    }
+
+    @objc
+    private func toolbarShowHome() {
+        showCompanionHome()
+    }
+
+    @objc
+    private func toolbarShowChat() {
+        showChat()
+    }
+
+    @objc
+    private func toolbarShowSettings() {
+        showSettings()
+    }
+
+    @objc
+    private func toolbarShowActivityLog() {
+        showActivityLog()
+    }
+
+    @objc
+    private func toolbarShowStatistics() {
+        showStatistics()
+    }
+
+    private func makeToolbarItem(
+        identifier: NSToolbarItem.Identifier,
+        title: String,
+        symbolName: String,
+        action: Selector
+    ) -> NSToolbarItem {
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        item.label = title
+        item.paletteLabel = title
+        item.toolTip = title
+        item.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)
+        item.target = self
+        item.action = action
+        item.isBordered = true
+        return item
+    }
+
     private func displayContentView(_ contentView: NSView) {
         guard contentView.superview !== contentContainer else {
             return
@@ -716,4 +792,72 @@ public final class ChatWindowController: NSWindowController {
     private static func normalizedChatWindowOpacity(_ value: Double) -> Double {
         ChatAppearanceSettings.normalizedOpacity(value)
     }
+}
+
+extension ChatWindowController: NSToolbarDelegate {
+    public func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.vitapetHome, .vitapetChat, .vitapetSettings, .vitapetActivity, .vitapetStatistics]
+    }
+
+    public func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        toolbarDefaultItemIdentifiers(toolbar)
+    }
+
+    public func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        toolbarDefaultItemIdentifiers(toolbar)
+    }
+
+    public func toolbar(
+        _ toolbar: NSToolbar,
+        itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+        willBeInsertedIntoToolbar flag: Bool
+    ) -> NSToolbarItem? {
+        switch itemIdentifier {
+        case .vitapetHome:
+            return makeToolbarItem(
+                identifier: itemIdentifier,
+                title: L10n.tr("home.title"),
+                symbolName: "house",
+                action: #selector(toolbarShowHome)
+            )
+        case .vitapetChat:
+            return makeToolbarItem(
+                identifier: itemIdentifier,
+                title: L10n.menuChat,
+                symbolName: "bubble.left",
+                action: #selector(toolbarShowChat)
+            )
+        case .vitapetSettings:
+            return makeToolbarItem(
+                identifier: itemIdentifier,
+                title: L10n.menuSettings,
+                symbolName: "gearshape",
+                action: #selector(toolbarShowSettings)
+            )
+        case .vitapetActivity:
+            return makeToolbarItem(
+                identifier: itemIdentifier,
+                title: L10n.menuActivityLog,
+                symbolName: "list.bullet.rectangle",
+                action: #selector(toolbarShowActivityLog)
+            )
+        case .vitapetStatistics:
+            return makeToolbarItem(
+                identifier: itemIdentifier,
+                title: L10n.menuStatistics,
+                symbolName: "chart.bar",
+                action: #selector(toolbarShowStatistics)
+            )
+        default:
+            return nil
+        }
+    }
+}
+
+private extension NSToolbarItem.Identifier {
+    static let vitapetHome = NSToolbarItem.Identifier("vitapet.home")
+    static let vitapetChat = NSToolbarItem.Identifier("vitapet.chat")
+    static let vitapetSettings = NSToolbarItem.Identifier("vitapet.settings")
+    static let vitapetActivity = NSToolbarItem.Identifier("vitapet.activity")
+    static let vitapetStatistics = NSToolbarItem.Identifier("vitapet.statistics")
 }

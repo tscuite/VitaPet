@@ -83,13 +83,11 @@ final class ConfigManagerTests: XCTestCase {
 
         XCTAssertFalse(manager.config.memoryWorkerEnabled)
         XCTAssertEqual(manager.config.memoryWorkerEndpoint, "https://memory.example.com")
-        XCTAssertEqual(manager.config.memoryWorkerAuthMode, "basic")
-        XCTAssertEqual(manager.config.memoryWorkerUsername, "")
+        XCTAssertEqual(manager.config.memoryWorkerAuthMode, "signed")
         XCTAssertEqual(manager.config.memoryWorkerSecret, "")
         XCTAssertEqual(manager.config.memoryWorkerNamespace, "default")
-        XCTAssertEqual(manager.config.memoryWorkerScope, "user")
-        XCTAssertEqual(manager.config.memoryWorkerSubject, "demo-user")
-        XCTAssertEqual(manager.config.memoryWorkerQueryLimit, 5)
+        XCTAssertEqual(manager.config.memoryWorkerScope, "general")
+        XCTAssertEqual(manager.config.memoryWorkerQueryLimit, 50)
         XCTAssertEqual(manager.config.memoryWorkerCreateHorizon, "daily")
     }
 
@@ -188,11 +186,9 @@ final class ConfigManagerTests: XCTestCase {
             memoryWorkerEnabled: true,
             memoryWorkerEndpoint: "https://memory.example.com",
             memoryWorkerAuthMode: "bearer",
-            memoryWorkerUsername: "tester",
             memoryWorkerSecret: "demo-credential",
             memoryWorkerNamespace: "default",
             memoryWorkerScope: "user",
-            memoryWorkerSubject: "demo-user",
             memoryWorkerQueryLimit: 9,
             memoryWorkerCreateHorizon: "weekly"
         )
@@ -217,11 +213,9 @@ final class ConfigManagerTests: XCTestCase {
         XCTAssertEqual(decoded.memoryWorkerEnabled, true)
         XCTAssertEqual(decoded.memoryWorkerEndpoint, "https://memory.example.com")
         XCTAssertEqual(decoded.memoryWorkerAuthMode, "bearer")
-        XCTAssertEqual(decoded.memoryWorkerUsername, "tester")
         XCTAssertEqual(decoded.memoryWorkerSecret, "demo-credential")
         XCTAssertEqual(decoded.memoryWorkerNamespace, "default")
         XCTAssertEqual(decoded.memoryWorkerScope, "user")
-        XCTAssertEqual(decoded.memoryWorkerSubject, "demo-user")
         XCTAssertEqual(decoded.memoryWorkerQueryLimit, 9)
         XCTAssertEqual(decoded.memoryWorkerCreateHorizon, "weekly")
         XCTAssertEqual(decoded.pets[0].gender, "female")

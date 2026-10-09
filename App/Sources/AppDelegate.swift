@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var chatViewModel: ChatViewModel!
     private var chatController: ChatWindowController!
     private var statusBarController: StatusBarController!
+    private var usageBarController: UsageBarController?
     private var inputBarController: InputBarWindowController!
     private let eventBus = EventBus()
     private var timerSource: TimerSource!
@@ -64,6 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var timeWeatherController = TimeWeatherController()
     private var miniGameManager = MiniGameManager()
     private var pomodoroController = PomodoroController()
+    private let companionStore = CompanionStore()
     private var conversationTurnCount = 0
     private var chatPathSomersaultFired = false
     private var chatPathToolActionFired = false
@@ -79,20 +81,98 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var bootstrapTask: Task<Void, Never>?
     private var terminationInProgress = false
 
+    private func configureCompanionHome() {
+        chatController.configureCompanionHome { [weak self] selectedPetID in
+            CompanionHomeView(
+                selectedPetID: selectedPetID,
+                loadPets: { [weak self] in
+                    guard let self else { return [] }
+                    let packs = SpritePackLoader.discoverPacks()
+                    return try self.configManager.config.pets.map { pet in
+                        CompanionPet(
+                            id: pet.id,
+                            name: pet.name,
+                            packDirectory: packs.first(where: { $0.id == pet.spritePack })?.directory,
+                            happiness: self.petWindowControllers[pet.id]?.currentHappiness ?? pet.happiness,
+                            progress: try self.companionStore.progress(for: pet.id)
+                        )
+                    }
+                },
+                onCare: { [weak self] petID, action in
+                    guard let self else { throw Self.companionError("home.unavailable") }
+                    return try await self.performCompanionCare(action, for: petID)
+                },
+                onChat: { [weak self] petID in self?.chatController.showChat(forPetId: petID) },
+                focusState: { [weak self] in
+                    CompanionFocusState(
+                        status: self?.pomodoroStatusText() ?? L10n.menuPomodoroIdle,
+                        isIdle: self?.pomodoroController.state == .idle,
+                        isPaused: self?.pomodoroController.isPaused ?? false,
+                        remaining: self?.pomodoroController.remainingSeconds ?? 0,
+                        duration: self?.pomodoroController.sessionDuration ?? 25 * 60
+                    )
+                },
+                onToggleFocus: { [weak self] in
+                    guard let self else { return }
+                    if self.pomodoroController.state == .idle {
+                        self.pomodoroController.start()
+                    } else if self.pomodoroController.isPaused {
+                        self.pomodoroController.resume()
+                    } else {
+                        self.pomodoroController.pause()
+                    }
+                },
+                onResetFocus: { [weak self] in self?.pomodoroController.reset() },
+                availableGames: { [weak self] in self?.miniGameManager.availableGames().map(\.name) ?? [] },
+                onStartGame: { [weak self] name in self?.miniGameManager.startGame(named: name) }
+            )
+        }
+    }
+
+    private func performCompanionCare(_ action: CareAction, for petID: UUID) async throws -> String {
+        guard !terminationInProgress, let controller = petWindowControllers[petID] else {
+            throw Self.companionError("home.unavailable")
+        }
+        guard !miniGameManager.isPlaying else { throw Self.companionError("home.game_busy") }
+        let earned: Int
+        do {
+            earned = try companionStore.perform(action, for: petID)
+        } catch CareError.cooldown(let seconds) {
+            throw NSError(domain: "VitaPet.Care", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: String(format: L10n.tr("home.cooldown"), seconds)
+            ])
+        } catch CareError.needsRest {
+            throw Self.companionError("home.rest_first")
+        } catch {
+            AppLogger.error("Failed to save companion progress: \(error.localizedDescription)")
+            throw Self.companionError("home.save_error")
+        }
+        await controller.adjustMood(by: action.moodDelta)
+        if !terminationInProgress, petWindowControllers[petID] != nil {
+            controller.showCareReaction(action)
+        }
+        let response = L10n.tr("home.response.\(action.rawValue)")
+        return earned > 0 ? "\(response)  +\(earned) XP" : response
+    }
+
+    private static func companionError(_ key: String) -> NSError {
+        NSError(domain: "VitaPet.Care", code: 1, userInfo: [NSLocalizedDescriptionKey: L10n.tr(key)])
+    }
+
     /// Status line shown at the top of the 番茄钟 menu (phase + remaining time).
     private func pomodoroStatusText() -> String {
         let remaining = pomodoroController.remainingSeconds
         let timeText = String(format: "%02d:%02d", remaining / 60, remaining % 60)
         if pomodoroController.isPaused {
-            return "已暂停 · \(timeText)"
+            return L10n.menuPomodoroPaused(timeText)
         }
         switch pomodoroController.state {
         case .idle:
-            return remaining > 0 ? "已暂停 · \(timeText)" : "未开始"
+            return L10n.menuPomodoroIdle
         case .working:
-            return "专注中 · \(timeText)"
+            return L10n.menuPomodoroWorking(timeText)
         case .breakTime:
-            return "休息中 · \(timeText)"
+            return L10n.menuPomodoroBreak(timeText)
         }
     }
 
@@ -111,6 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let canTerminate = await orderlyShutdown()
             if !canTerminate {
                 terminationInProgress = false
+                usageBarController?.start()
             }
             NSApp.reply(toApplicationShouldTerminate: canTerminate)
         }
@@ -125,6 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func orderlyShutdown() async -> Bool {
         let bootstrapTask = bootstrapTask
         bootstrapTask?.cancel()
+        await usageBarController?.stop()
         await memoryRemoteBootstrapCoordinator.cancelAndWait()
         await bootstrapTask?.value
         self.bootstrapTask = nil
@@ -520,8 +602,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             return nil
         }
-        let onSaveAIMemoryConfig: @MainActor (Bool, String, String, String, String, String, String, Int) -> Void = {
-            [weak self, weak configManager] enabled, endpoint, authMode, username, secret, scope, subject, queryLimit in
+        let onSaveAIMemoryConfig: @MainActor (Bool, String, String, String, String, Int) -> Void = {
+            [weak self, weak configManager] enabled, endpoint, authMode, secret, scope, queryLimit in
             guard let self,
                   let configManager,
                   !self.terminationInProgress else {
@@ -530,10 +612,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             let resolvedEndpoint = Self.normalizedMemoryWorkerEndpoint(endpoint)
             let resolvedAuthMode = Self.resolvedMemoryWorkerAuthMode(from: authMode)
-            let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
             let trimmedSecret = secret.trimmingCharacters(in: .whitespacesAndNewlines)
             let resolvedScope = Self.normalizedMemoryWorkerScope(scope)
-            let resolvedSubject = Self.normalizedMemoryWorkerSubject(subject)
             let resolvedQueryLimit = Self.normalizedMemoryWorkerQueryLimit(queryLimit)
 
             do {
@@ -541,10 +621,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     $0.memoryWorkerEnabled = enabled
                     $0.memoryWorkerEndpoint = resolvedEndpoint
                     $0.memoryWorkerAuthMode = resolvedAuthMode.rawValue
-                    $0.memoryWorkerUsername = trimmedUsername
                     $0.memoryWorkerSecret = trimmedSecret
                     $0.memoryWorkerScope = resolvedScope
-                    $0.memoryWorkerSubject = resolvedSubject
                     $0.memoryWorkerQueryLimit = resolvedQueryLimit
                 }
             } catch {
@@ -600,11 +678,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 enabled: true,
                 endpoint: resolvedConfig.endpoint,
                 authMode: resolvedConfig.authMode,
-                username: resolvedConfig.username,
                 secret: resolvedConfig.secret,
                 namespace: resolvedConfig.namespace,
                 scope: resolvedConfig.scope,
-                subject: resolvedConfig.subject,
                 queryLimit: resolvedConfig.queryLimit,
                 createHorizon: resolvedConfig.createHorizon
             )
@@ -630,11 +706,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 enabled: true,
                 endpoint: resolvedConfig.endpoint,
                 authMode: resolvedConfig.authMode,
-                username: resolvedConfig.username,
                 secret: resolvedConfig.secret,
                 namespace: resolvedConfig.namespace,
                 scope: resolvedConfig.scope,
-                subject: resolvedConfig.subject,
                 queryLimit: resolvedConfig.queryLimit,
                 createHorizon: resolvedConfig.createHorizon
             )
@@ -643,7 +717,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             do {
                 _ = try await service.createMemory(
                     content: "VitaPet 写入自检 \(token)",
-                    category: "fact",
+                    target: "user",
+                    category: "insight",
                     importance: 1,
                     tags: ["vitapet-self-test", token]
                 )
@@ -976,23 +1051,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 configManager?.config.memoryWorkerEndpoint ?? "https://memory.example.com"
             },
             memoryWorkerAuthMode: { [weak configManager] in
-                let rawValue = configManager?.config.memoryWorkerAuthMode ?? "basic"
+                let rawValue = configManager?.config.memoryWorkerAuthMode ?? "signed"
                 return Self.resolvedMemoryWorkerAuthMode(from: rawValue).rawValue
-            },
-            memoryWorkerUsername: { [weak configManager] in
-                configManager?.config.memoryWorkerUsername ?? ""
             },
             memoryWorkerSecret: { [weak configManager] in
                 configManager?.config.memoryWorkerSecret ?? ""
             },
             memoryWorkerScope: { [weak configManager] in
-                configManager?.config.memoryWorkerScope ?? "user"
-            },
-            memoryWorkerSubject: { [weak configManager] in
-                configManager?.config.memoryWorkerSubject ?? "demo-user"
+                configManager?.config.memoryWorkerScope ?? "general"
             },
             memoryWorkerQueryLimit: { [weak configManager] in
-                configManager?.config.memoryWorkerQueryLimit ?? 5
+                configManager?.config.memoryWorkerQueryLimit ?? 50
             },
             aiStatus: { [weak self] in
                 Self.chatUIStatus(from: self?.aiStatus ?? .notConfigured)
@@ -1654,9 +1723,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pomodoroMenuState: { [weak self] in
                 guard let self else {
                     return StatusBarController.PomodoroMenuState(
-                        statusText: "未开始",
+                        statusText: L10n.menuPomodoroIdle,
                         startEnabled: true,
-                        pauseTitle: "暂停",
+                        pauseTitle: L10n.menuPomodoroPause,
                         pauseEnabled: false,
                         resetEnabled: false,
                         skipEnabled: false
@@ -1668,7 +1737,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return StatusBarController.PomodoroMenuState(
                     statusText: self.pomodoroStatusText(),
                     startEnabled: isIdle,
-                    pauseTitle: isPaused ? "继续" : "暂停",
+                    pauseTitle: isPaused ? L10n.menuPomodoroResume : L10n.menuPomodoroPause,
                     pauseEnabled: !isIdle,
                     resetEnabled: !isIdle || self.pomodoroController.remainingSeconds > 0,
                     skipEnabled: !isIdle
@@ -1745,6 +1814,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         for pet in configManager.config.pets {
             createAndShowPetController(for: pet)
+        }
+        configureCompanionHome()
+        if !terminationInProgress, !Task.isCancelled {
+            let usageBar = UsageBarController()
+            usageBarController = usageBar
+            statusBarController.configureUsageBar(
+                isVisible: { [weak usageBar] in usageBar?.isVisible ?? false },
+                canRefresh: { [weak self, weak usageBar] in
+                    self?.terminationInProgress == false
+                        && usageBar?.store.settings.monitoringEnabled == true
+                        && usageBar?.store.isRefreshing == false
+                },
+                toggle: { [weak usageBar] in usageBar?.toggleVisibility() },
+                refresh: { [weak self, weak usageBar] in
+                    guard self?.terminationInProgress == false,
+                          usageBar?.store.settings.monitoringEnabled == true else { return }
+                    usageBar?.store.refresh()
+                },
+                settings: { [weak usageBar] in usageBar?.showSettings() },
+                onLook: { [weak usageBar] in usageBar?.store.refreshBecauseSomeoneIsLooking() }
+            )
+            usageBar.start()
         }
         await memoryRemoteBootstrapCoordinator.markVisibleUIReady()
         await startRemoteMemoryBootstrapIfNeeded(databaseManager: databaseManager)
@@ -1854,12 +1945,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("VitaPet", isDirectory: true)
             .path
+        // ~/Library 和 ~/.Trash 是系统/应用缓存的抖动源(Safari、Spotlight、Biome、各 App 缓存),
+        // 对宠物毫无意义却能贡献每天数十万条 fileChanged; 构建/依赖目录由 FSEventsMonitor 默认组件过滤处理。
+        let homeDirectory = NSHomeDirectory()
         fsEventsMonitor = FSEventsMonitor(
-            paths: [NSHomeDirectory()],
-            excludedRoots: [applicationSupportRoot]
+            paths: [homeDirectory],
+            excludedRoots: [
+                applicationSupportRoot,
+                (homeDirectory as NSString).appendingPathComponent("Library"),
+                (homeDirectory as NSString).appendingPathComponent(".Trash"),
+            ]
         )
-        // 请求辅助功能权限（全局快捷键需要）
-        requestAccessibilityPermission()
+        // 辅助功能权限不再启动时申请：需要窗口感知/吸附时再去系统设置里手动授权
         keyboardMonitor = KeyboardMonitor()
         if configManager.config.webhookEnabled {
             // 配置值可能越界（用户手填或手改 plist），UInt16(Int) 对 <0 / >65535 会 trap。
@@ -2439,9 +2536,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
                     if let memoryWorkerService = self.memoryWorkerService {
                         do {
+                            let mapping = MemoryWorkerService.remoteTargetAndCategory(for: memory.category)
                             let remote = try await memoryWorkerService.createMemory(
                                 content: memory.content,
-                                category: memory.category.rawValue,
+                                target: mapping.target,
+                                category: mapping.category,
                                 importance: memory.importance,
                                 tags: ["auto", memory.category.rawValue]
                             )
@@ -2475,6 +2574,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 启动一个后台任务，周期性 flush 未同步记忆。重复调用会先取消旧任务。
     /// 即便 `memoryWorkerService` 暂时为 nil 也无所谓——`pushUnsyncedMemoriesToRemote` 会直接返回。
+    /// 每轮对话前用用户消息做一次远程语义召回：命中记忆灌进本地库（去重），并直接返回为上下文条目。
+    /// 失败静默——远程不可用时退回到纯本地上下文。
+    private func recallRemoteMemories(q: String) async -> [MemoryContextItem] {
+        guard let memoryWorkerService = self.memoryWorkerService else { return [] }
+        let trimmedQuery = q.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else { return [] }
+
+        do {
+            let remote = try await memoryWorkerService.queryMemories(q: trimmedQuery, limit: 8)
+            var items: [MemoryContextItem] = []
+            for item in remote {
+                let content = item.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !content.isEmpty else { continue }
+                let category = MemoryWorkerService.localCategory(fromRemoteCategory: item.category)
+                let importance = max(1, min(3, item.importance ?? 2))
+                if let databaseManager = self.databaseManager {
+                    let hash = Self.memoryContentHash(content)
+                    if (try? await databaseManager.memoryExists(contentHash: hash)) == false {
+                        _ = try? await databaseManager.insertMemory(
+                            content: content,
+                            category: category.rawValue,
+                            importance: importance,
+                            source: "remote",
+                            contentHash: hash
+                        )
+                    }
+                }
+                items.append(MemoryContextItem(content: content, category: category, importance: importance))
+            }
+            return items
+        } catch {
+            return []
+        }
+    }
+
     private func startMemoryRemoteSyncTaskIfNeeded() {
         memoryRemoteSyncTask?.cancel()
         memoryRemoteSyncTask = Task { [weak self] in
@@ -2486,6 +2620,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 guard let self else { return }
                 await self.pushUnsyncedMemoriesToRemote()
+                // 周期拉取：远端新增/变更的记忆同步进本地上下文
+                if let databaseManager = self.databaseManager {
+                    await self.syncFromRemoteMemories(databaseManager: databaseManager)
+                    await self.refreshMemoryContext()
+                }
             }
         }
     }
@@ -2526,9 +2665,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     if tags.isEmpty {
                         tags = ["auto"]
                     }
+                    let localCategory = MemoryCategory(rawValue: record.category) ?? .fact
+                    let mapping = MemoryWorkerService.remoteTargetAndCategory(for: localCategory)
                     let remote = try await memoryWorkerService.createMemory(
                         content: record.content,
-                        category: record.category,
+                        target: mapping.target,
+                        category: mapping.category,
                         importance: record.importance,
                         tags: tags
                     )
@@ -2553,15 +2695,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Recompute and push the memory block to the current AI service.
     @discardableResult
-    func refreshMemoryContext() async -> [DatabaseManager.MemoryRecord] {
+    func refreshMemoryContext(extra: [MemoryContextItem] = []) async -> [DatabaseManager.MemoryRecord] {
         guard let databaseManager = self.databaseManager else { return [] }
 
         let local = (try? await databaseManager.fetchMemoryRecords(limit: 40)) ?? []
-        let items = local.map {
-            MemoryContextItem(
-                content: $0.content,
-                category: MemoryCategory(rawValue: $0.category) ?? .fact,
-                importance: $0.importance
+        // 远程召回结果置顶，本地记录按 importance 补足（按内容去重）
+        var seen = Set<String>()
+        var items: [MemoryContextItem] = []
+        for item in extra {
+            guard seen.insert(item.content).inserted else { continue }
+            items.append(item)
+        }
+        for record in local {
+            guard seen.insert(record.content).inserted else { continue }
+            items.append(
+                MemoryContextItem(
+                    content: record.content,
+                    category: MemoryCategory(rawValue: record.category) ?? .fact,
+                    importance: record.importance
+                )
             )
         }
 
@@ -2608,9 +2760,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             if let memoryWorkerService = self.memoryWorkerService {
                 do {
+                    let mapping = MemoryWorkerService.remoteTargetAndCategory(for: storedCategory)
                     let remote = try await memoryWorkerService.createMemory(
                         content: storedContent,
-                        category: storedCategory.rawValue,
+                        target: mapping.target,
+                        category: mapping.category,
                         importance: storedImportance,
                         tags: ["manual", storedCategory.rawValue]
                     )
@@ -2645,6 +2799,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func deleteMemoryRecord(id: Int64) async {
         guard let databaseManager = self.databaseManager else { return }
         do {
+            // 先删远端（如果有对应的 remote_id），再删本地，避免远端残留。
+            if let memoryWorkerService = self.memoryWorkerService,
+               let record = try await databaseManager.fetchMemoryRecord(id: id),
+               let remoteIdText = record.remoteId,
+               let remoteId = Int(remoteIdText) {
+                do {
+                    _ = try await memoryWorkerService.deleteMemory(id: remoteId)
+                } catch {
+                    // 远端删除失败不阻断本地删除（404 会返回 false，不算错误）
+                    AppLogger.error("Failed to delete remote memory id=\(remoteId): \(error.localizedDescription)")
+                }
+            }
             try await databaseManager.deleteMemory(id: id)
             await refreshMemoryContext()
         } catch {
@@ -2766,8 +2932,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 do {
                     let localId = try await databaseManager.insertMemory(
                         content: item.content,
-                        category: MemoryCategory.fact.rawValue,
-                        importance: 1,
+                        category: MemoryWorkerService.localCategory(fromRemoteCategory: item.category).rawValue,
+                        importance: max(1, min(3, item.importance ?? 1)),
                         source: "remote",
                         contentHash: hash
                     )
@@ -2840,6 +3006,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.statusBarController?.refreshMoodTooltip()
             }
         )
+        controller.onCareRequested = { [weak self, weak controller] action in
+            Task { @MainActor in
+                guard let self else { return }
+                do {
+                    _ = try await self.performCompanionCare(action, for: pet.id)
+                } catch {
+                    controller?.showBubble(error.localizedDescription, duration: 4)
+                }
+            }
+        }
         controller.soundManager = SoundManager()
         controller.soundManager?.applyRuntimeSettings(
             enabled: resolvedSoundEnabled(for: pet),
@@ -3180,7 +3356,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let systemPrompt = configManager.config.aiSystemPrompt
         await ollamaService.updateSystemPrompt(systemPrompt)
-        await refreshMemoryContext()
+        // 每轮对话前：用用户消息做一次远程语义召回，把命中的记忆灌进上下文
+        let recalled = await recallRemoteMemories(q: text)
+        await refreshMemoryContext(extra: recalled)
         try Task.checkCancellation()
 
         let targetPets = configManager.config.pets.filter { targetPetIDs.contains($0.id) }
@@ -3773,11 +3951,6 @@ private extension JSONEncoder {
     }
 }
 
-private func requestAccessibilityPermission() {
-    let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-    AXIsProcessTrustedWithOptions(options)
-}
-
 private extension AppDelegate {
     static func storageByteText(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: max(0, bytes), countStyle: .file)
@@ -3818,7 +3991,9 @@ private extension AppDelegate {
     }
 
     static func resolvedMemoryWorkerAuthMode(from rawValue: String) -> MemoryWorkerAuthMode {
-        MemoryWorkerAuthMode(rawValue: rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) ?? .basic
+        // 旧配置里的 "basic" 已废弃（worker 不支持 basic），统一落到 signed
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return MemoryWorkerAuthMode(rawValue: trimmed) ?? .signed
     }
 
     static func normalizedMemoryWorkerEndpoint(
@@ -3837,27 +4012,15 @@ private extension AppDelegate {
         return "https://\(trimmed)"
     }
 
-    static func normalizedMemoryWorkerScope(_ rawValue: String, fallback: String = "user") -> String {
+    static func normalizedMemoryWorkerScope(_ rawValue: String, fallback: String = "general") -> String {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? fallback : trimmed
+        if trimmed.isEmpty { return fallback }
+        // 旧默认 "user" 迁到 pi 记忆的默认 scope "general"，否则读不到既有记忆
+        if trimmed == "user" { return "general" }
+        return trimmed
     }
 
-    static func normalizedMemoryWorkerSubject(_ rawValue: String, fallback: String = "") -> String {
-        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty, trimmed != "demo-user" {
-            return trimmed
-        }
-
-        let explicitFallback = fallback.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !explicitFallback.isEmpty {
-            return explicitFallback
-        }
-
-        let systemUser = NSUserName().trimmingCharacters(in: .whitespacesAndNewlines)
-        return systemUser.isEmpty ? "default" : systemUser
-    }
-
-    static func normalizedMemoryWorkerQueryLimit(_ rawValue: Int, fallback: Int = 5) -> Int {
+    static func normalizedMemoryWorkerQueryLimit(_ rawValue: Int, fallback: Int = 50) -> Int {
         let resolved = rawValue <= 0 ? fallback : rawValue
         return max(1, min(100, resolved))
     }
@@ -3877,13 +4040,11 @@ private extension AppDelegate {
             enabled: config.memoryWorkerEnabled,
             endpoint: normalizedMemoryWorkerEndpoint(config.memoryWorkerEndpoint),
             authMode: resolvedMemoryWorkerAuthMode(from: config.memoryWorkerAuthMode),
-            username: config.memoryWorkerUsername.trimmingCharacters(in: .whitespacesAndNewlines),
             secret: config.memoryWorkerSecret.trimmingCharacters(in: .whitespacesAndNewlines),
             namespace: config.memoryWorkerNamespace.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? "default"
                 : config.memoryWorkerNamespace.trimmingCharacters(in: .whitespacesAndNewlines),
             scope: normalizedMemoryWorkerScope(config.memoryWorkerScope),
-            subject: normalizedMemoryWorkerSubject(config.memoryWorkerSubject),
             queryLimit: normalizedMemoryWorkerQueryLimit(config.memoryWorkerQueryLimit),
             createHorizon: normalizedMemoryWorkerHorizon(config.memoryWorkerCreateHorizon)
         )

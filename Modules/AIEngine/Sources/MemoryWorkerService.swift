@@ -1,19 +1,21 @@
 import Foundation
+#if canImport(CryptoKit)
+import CryptoKit
+#endif
 
 public enum MemoryWorkerAuthMode: String, Codable, Sendable, CaseIterable {
-    case basic
     case bearer
+    /// HMAC 请求签名鉴权（X-Auth-Timestamp/Nonce/Signature）
+    case signed
 }
 
 public struct MemoryWorkerConfig: Codable, Sendable {
     public var enabled: Bool
     public var endpoint: String
     public var authMode: MemoryWorkerAuthMode
-    public var username: String
     public var secret: String
     public var namespace: String
     public var scope: String
-    public var subject: String
     public var queryLimit: Int
     public var createHorizon: String
 
@@ -21,22 +23,18 @@ public struct MemoryWorkerConfig: Codable, Sendable {
         enabled: Bool,
         endpoint: String,
         authMode: MemoryWorkerAuthMode,
-        username: String,
         secret: String,
         namespace: String = "default",
-        scope: String = "user",
-        subject: String,
-        queryLimit: Int = 5,
+        scope: String = "general",
+        queryLimit: Int = 50,
         createHorizon: String = "daily"
     ) {
         self.enabled = enabled
         self.endpoint = endpoint
         self.authMode = authMode
-        self.username = username
         self.secret = secret
         self.namespace = namespace
         self.scope = scope
-        self.subject = subject
         self.queryLimit = max(1, min(100, queryLimit))
         self.createHorizon = createHorizon
     }
@@ -45,15 +43,33 @@ public struct MemoryWorkerConfig: Codable, Sendable {
 public struct MemoryWorkerItem: Decodable, Sendable {
     public let id: Int?
     public let content: String
+    /// pi 记忆模型字段：这条记忆是“关于谁”的（memory/user/failure）
+    public let target: String?
+    /// pi 记忆模型字段：标准分类（preference/insight/...）或扩展 slug
+    public let category: String?
+    /// metadata.importance 的宽松解析（Int/Double/String 都接受）
+    public let importance: Int?
 
     private enum CodingKeys: String, CodingKey {
         case id
         case content
+        case target
+        case category
+        case metadata
     }
 
-    public init(id: Int?, content: String) {
+    public init(
+        id: Int?,
+        content: String,
+        target: String? = nil,
+        category: String? = nil,
+        importance: Int? = nil
+    ) {
         self.id = id
         self.content = content
+        self.target = target
+        self.category = category
+        self.importance = importance
     }
 
     public init(from decoder: Decoder) throws {
@@ -65,6 +81,31 @@ public struct MemoryWorkerItem: Decodable, Sendable {
             self.id = intId
         } else {
             self.id = nil
+        }
+        self.target = try? c.decodeIfPresent(String.self, forKey: .target)
+        self.category = try? c.decodeIfPresent(String.self, forKey: .category)
+        if let metadata = (try? c.decodeIfPresent([String: FlexibleScalar].self, forKey: .metadata)) ?? nil {
+            self.importance = metadata["importance"]?.intValue
+        } else {
+            self.importance = nil
+        }
+    }
+}
+
+/// 宽松标量：服务端 importance 可能是 0.9 / 1 / "1" 三种形态
+private struct FlexibleScalar: Decodable {
+    let intValue: Int?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if let i = try? c.decode(Int.self) {
+            intValue = i
+        } else if let d = try? c.decode(Double.self) {
+            intValue = Int(d.rounded())
+        } else if let s = try? c.decode(String.self), let i = Int(s.trimmingCharacters(in: .whitespaces)) {
+            intValue = i
+        } else {
+            intValue = nil
         }
     }
 }
@@ -82,7 +123,12 @@ public actor MemoryWorkerService {
         config = newConfig
     }
 
-    public func queryMemories(q: String? = nil) async throws -> [MemoryWorkerItem] {
+    public func queryMemories(
+        q: String? = nil,
+        target: String? = nil,
+        category: String? = nil,
+        limit: Int? = nil
+    ) async throws -> [MemoryWorkerItem] {
         guard config.enabled else {
             return []
         }
@@ -91,19 +137,20 @@ public actor MemoryWorkerService {
         request.httpMethod = "POST"
         request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        try Self.applyAuthorization(to: &request, config: config)
 
         let trimmedQuery = q?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestLimit = limit.map { max(1, min(100, $0)) } ?? max(1, min(100, config.queryLimit))
         let payload = QueryRequest(
             namespace: config.namespace,
-            scope: config.scope,
-            subject: config.subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? nil
-                : config.subject.trimmingCharacters(in: .whitespacesAndNewlines),
+            // 查询不带 scope：读全量远程记忆（pi 记忆的 scope=general）
+            scope: nil,
             q: (trimmedQuery?.isEmpty == true) ? nil : trimmedQuery,
-            limit: max(1, min(100, config.queryLimit))
+            target: target?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : target,
+            category: category?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : category,
+            limit: requestLimit
         )
         request.httpBody = try JSONEncoder().encode(payload)
+        try Self.applyAuthorization(to: &request, config: config)
 
         let (data, response) = try await urlSession.data(for: request)
         try Self.validate(response: response, data: data)
@@ -125,7 +172,9 @@ public actor MemoryWorkerService {
     @discardableResult
     public func createMemory(
         content: String,
+        target: String? = nil,
         category: String? = nil,
+        failureReason: String? = nil,
         importance: Int? = nil,
         tags: [String] = ["auto"],
         metadata: [String: String]? = nil
@@ -143,7 +192,6 @@ public actor MemoryWorkerService {
         request.httpMethod = "POST"
         request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        try Self.applyAuthorization(to: &request, config: config)
 
         var combinedTags = tags
         if let category, !category.isEmpty, !combinedTags.contains(category) {
@@ -161,15 +209,16 @@ public actor MemoryWorkerService {
         let payload = CreateRequest(
             namespace: config.namespace,
             scope: config.scope,
-            subject: config.subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? nil
-                : config.subject.trimmingCharacters(in: .whitespacesAndNewlines),
             content: trimmedContent,
             tags: combinedTags.isEmpty ? nil : combinedTags,
             metadata: combinedMetadata.isEmpty ? nil : combinedMetadata,
-            horizon: config.createHorizon
+            horizon: config.createHorizon,
+            target: target,
+            category: category,
+            failureReason: failureReason
         )
         request.httpBody = try JSONEncoder().encode(payload)
+        try Self.applyAuthorization(to: &request, config: config)
 
         let (data, response) = try await urlSession.data(for: request)
         try Self.validate(response: response, data: data)
@@ -177,6 +226,70 @@ public actor MemoryWorkerService {
             return MemoryWorkerItem(id: nil, content: trimmedContent)
         }
         return try Self.decodeCreateMemoryItem(from: data, fallbackContent: trimmedContent)
+    }
+
+    /// PATCH /api/memories/:id —— 对应 agent 的 memory_replace 语义：
+    /// 记忆内容过时就地改写，而不是追加一条矛盾记录。nil 字段不会下发。
+    @discardableResult
+    public func updateMemory(
+        id: Int,
+        content: String? = nil,
+        target: String? = nil,
+        category: String? = nil,
+        importance: Int? = nil,
+        tags: [String]? = nil,
+        metadata: [String: String]? = nil
+    ) async throws -> MemoryWorkerItem? {
+        guard config.enabled else {
+            throw MemoryWorkerServiceError.disabled
+        }
+
+        var request = URLRequest(url: try Self.buildURL(from: config.endpoint, path: "/api/memories/\(id)"))
+        request.httpMethod = "PATCH"
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        var combinedMetadata = metadata ?? [:]
+        if let importance {
+            combinedMetadata["importance"] = String(max(1, min(3, importance)))
+        }
+
+        let payload = UpdateRequest(
+            content: content?.trimmingCharacters(in: .whitespacesAndNewlines),
+            target: target,
+            category: category,
+            tags: tags,
+            metadata: combinedMetadata.isEmpty ? nil : combinedMetadata
+        )
+        request.httpBody = try JSONEncoder().encode(payload)
+        try Self.applyAuthorization(to: &request, config: config)
+
+        let (data, response) = try await urlSession.data(for: request)
+        try Self.validate(response: response, data: data)
+        guard !data.isEmpty else { return nil }
+        return try Self.decodeCreateMemoryItem(from: data, fallbackContent: content ?? "")
+    }
+
+    /// DELETE /api/memories/:id —— 对应 agent 的 memory_remove 语义。
+    /// 返回 false 表示远端已不存在（404），视为幂等成功。
+    @discardableResult
+    public func deleteMemory(id: Int) async throws -> Bool {
+        guard config.enabled else {
+            throw MemoryWorkerServiceError.disabled
+        }
+
+        var request = URLRequest(url: try Self.buildURL(from: config.endpoint, path: "/api/memories/\(id)"))
+        request.httpMethod = "DELETE"
+        request.timeoutInterval = 20
+        try Self.applyAuthorization(to: &request, config: config)
+
+        do {
+            let (data, response) = try await urlSession.data(for: request)
+            try Self.validate(response: response, data: data)
+            return true
+        } catch MemoryWorkerServiceError.httpStatus(let status, _) where status == 404 {
+            return false
+        }
     }
 
     /// Workers vary: `{ "item": {...} }`, flat `{ "id","content" }`, `{ "ok": true }`, etc.
@@ -301,16 +414,6 @@ public actor MemoryWorkerService {
 
     private static func applyAuthorization(to request: inout URLRequest, config: MemoryWorkerConfig) throws {
         switch config.authMode {
-        case .basic:
-            let username = config.username.trimmingCharacters(in: .whitespacesAndNewlines)
-            let secret = config.secret.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !username.isEmpty, !secret.isEmpty else {
-                throw MemoryWorkerServiceError.missingCredentials("basic")
-            }
-
-            let raw = "\(username):\(secret)"
-            let encoded = Data(raw.utf8).base64EncodedString()
-            request.setValue("Basic \(encoded)", forHTTPHeaderField: "Authorization")
         case .bearer:
             let token = config.secret.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !token.isEmpty else {
@@ -318,7 +421,44 @@ public actor MemoryWorkerService {
             }
 
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        case .signed:
+            // 与 memory worker 的 requireSignedAuth 同一套规范：
+            // canonical = method\npath+query\ntimestamp\nnonce\nbodyHash，HMAC-SHA256(secret) 十六进制
+            let secret = config.secret.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !secret.isEmpty else {
+                throw MemoryWorkerServiceError.missingCredentials("signed")
+            }
+            let method = (request.httpMethod ?? "GET").uppercased()
+            guard let url = request.url else {
+                throw MemoryWorkerServiceError.invalidEndpoint(config.endpoint)
+            }
+            var pathAndQuery = url.path
+            if let query = url.query, !query.isEmpty {
+                pathAndQuery += "?" + query
+            }
+            let bodyHash = Self.sha256Hex(request.httpBody ?? Data())
+            let timestamp = String(Int(Date().timeIntervalSince1970))
+            let nonce = Self.randomHex(32)
+            let canonical = [method, pathAndQuery, timestamp, nonce, bodyHash].joined(separator: "\n")
+            let key = SymmetricKey(data: Data(secret.utf8))
+            let code = HMAC<SHA256>.authenticationCode(for: Data(canonical.utf8), using: key)
+            let signatureHex = code.map { String(format: "%02x", $0) }.joined()
+            request.setValue(timestamp, forHTTPHeaderField: "X-Auth-Timestamp")
+            request.setValue(nonce, forHTTPHeaderField: "X-Auth-Nonce")
+            request.setValue(signatureHex, forHTTPHeaderField: "X-Auth-Signature")
         }
+    }
+
+    private static func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func randomHex(_ byteCount: Int) -> String {
+        var bytes = [UInt8](repeating: 0, count: byteCount)
+        for index in 0..<byteCount {
+            bytes[index] = UInt8.random(in: 0...255)
+        }
+        return bytes.map { String(format: "%02x", $0) }.joined()
     }
 
     private static func validate(response: URLResponse, data: Data) throws {
@@ -334,20 +474,61 @@ public actor MemoryWorkerService {
 
     private struct QueryRequest: Encodable {
         let namespace: String
-        let scope: String
-        let subject: String?
+        let scope: String?
         let q: String?
+        let target: String?
+        let category: String?
         let limit: Int
     }
 
     private struct CreateRequest: Encodable {
         let namespace: String
         let scope: String
-        let subject: String?
         let content: String
         let tags: [String]?
         let metadata: [String: String]?
         let horizon: String
+        let target: String?
+        let category: String?
+        let failureReason: String?
+
+        enum CodingKeys: String, CodingKey {
+            case namespace
+            case scope
+            case content
+            case tags
+            case metadata
+            case horizon
+            case target
+            case category
+            case failureReason = "failure_reason"
+        }
+    }
+
+    /// PATCH 请求体：只编码非 nil 字段，避免把服务端的 category 意外清空
+    private struct UpdateRequest: Encodable {
+        let content: String?
+        let target: String?
+        let category: String?
+        let tags: [String]?
+        let metadata: [String: String]?
+
+        private enum CodingKeys: String, CodingKey {
+            case content
+            case target
+            case category
+            case tags
+            case metadata
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(content, forKey: .content)
+            try c.encodeIfPresent(target, forKey: .target)
+            try c.encodeIfPresent(category, forKey: .category)
+            try c.encodeIfPresent(tags, forKey: .tags)
+            try c.encodeIfPresent(metadata, forKey: .metadata)
+        }
     }
 
     private struct QueryResponse: Decodable {
@@ -366,6 +547,43 @@ public actor MemoryWorkerService {
             item = try c.decodeIfPresent(MemoryWorkerItem.self, forKey: .item)
             items = try c.decodeIfPresent([MemoryWorkerItem].self, forKey: .items) ?? []
             count = try c.decodeIfPresent(Int.self, forKey: .count) ?? items.count
+        }
+    }
+}
+
+public extension MemoryWorkerService {
+    /// VitaPet 分类 → pi 记忆模型（target + category）。以 pi 词汇为准：
+    /// preference/insight 用标准词，event/todo/relationship 作为扩展 slug 保留语义。
+    static func remoteTargetAndCategory(for category: MemoryCategory) -> (target: String, category: String?) {
+        switch category {
+        case .preference:
+            return ("user", "preference")
+        case .fact:
+            return ("user", "insight")
+        case .event:
+            return ("memory", "event")
+        case .todo:
+            return ("memory", "todo")
+        case .relationship:
+            return ("memory", "relationship")
+        }
+    }
+
+    /// pi 记忆模型 category → VitaPet 分类（同步回本地时用）。
+    static func localCategory(fromRemoteCategory remote: String?) -> MemoryCategory {
+        guard let remote, !remote.isEmpty else { return .fact }
+        switch remote {
+        case "preference":
+            return .preference
+        case "event":
+            return .event
+        case "todo":
+            return .todo
+        case "relationship":
+            return .relationship
+        default:
+            // insight/fact/convention/... 统一落为事实
+            return .fact
         }
     }
 }

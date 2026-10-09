@@ -39,7 +39,9 @@ public struct StoragePolicy: Sendable, Equatable {
         fileDetailRetention: 86_400,
         eventRetention: 2_592_000,
         flushInterval: 30,
-        maintenanceInterval: 86_400,
+        // Hourly: each pass is budgeted (rows + wall clock), so frequent small passes keep the
+        // events table bounded instead of letting a day of writes pile up.
+        maintenanceInterval: 3_600,
         fullCompactionMinimumBytes: 256 << 20,
         fullCompactionFreeRatio: 0.25,
         compactionSafetyBytes: 256 << 20

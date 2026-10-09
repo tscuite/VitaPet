@@ -19,7 +19,7 @@ final class RenderCadencePlannerTests: XCTestCase {
         }
     }
 
-    func testVisibleStaticAndSingleFrameLoopsSuspendAfterTheirFinalFrame() {
+    func testVisibleStaticAndSingleFrameLoopsKeepTheResponsiveFallback() {
         let staticCadence = RenderCadencePlanner.cadence(for: .staticFrame, isVisible: true)
         let singleFrameCadence = RenderCadencePlanner.cadence(
             for: .spriteLoop(frameCount: 1, frameInterval: 0.02),
@@ -27,9 +27,9 @@ final class RenderCadencePlannerTests: XCTestCase {
         )
 
         XCTAssertEqual(staticCadence, singleFrameCadence)
-        XCTAssertEqual(staticCadence.framesPerSecond, 5)
-        XCTAssertTrue(staticCadence.scenePaused)
-        XCTAssertTrue(staticCadence.viewPaused)
+        XCTAssertEqual(staticCadence.framesPerSecond, 15)
+        XCTAssertFalse(staticCadence.scenePaused)
+        XCTAssertFalse(staticCadence.viewPaused)
     }
 
     func testSpriteLoopsUseSmallestSufficientCadenceTier() {
