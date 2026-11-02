@@ -18,8 +18,8 @@ enum UsagePiCredentials {
     }
 
     static func context(_ provider: UsageProviderID, home: URL, env: [String: String], now: Date) throws -> UsageCredentials.Context? {
-        // DeepSeek is local accounting; Cursor needs its editor cookie. Neither opens Pi credentials.
-        guard provider != .cursor, provider != .deepseek else { return nil }
+        // DeepSeek is local accounting; GLM borrows a coding tool's plan key. Neither opens Pi credentials.
+        guard provider != .glm, provider != .deepseek else { return nil }
         try Task.checkCancellation()
         let directory = try directory(home: home, env: env)
         let auth = try objectIfPresent(directory.appendingPathComponent("auth.json"))
@@ -30,7 +30,7 @@ enum UsagePiCredentials {
         case .claude: id = "anthropic"; hosts = ["api.anthropic.com"]
         case .copilot: id = "github-copilot"; hosts = ["api.githubcopilot.com", "api.individual.githubcopilot.com", "api.business.githubcopilot.com", "api.enterprise.githubcopilot.com"]
         case .ollama: id = "ollama"; hosts = ["ollama.com"]
-        case .cursor, .deepseek: return nil
+        case .glm, .deepseek: return nil
         }
         let models = try objectIfPresent(directory.appendingPathComponent("models.json"))
         guard models["providers"] == nil || models["providers"] is [String: Any] else { throw UsageFailure.incompatiblePiCredential }
@@ -93,7 +93,7 @@ enum UsagePiCredentials {
             guard config["baseUrl"] != nil else { throw UsageFailure.incompatiblePiCredential }
             token = try literal(credential == nil ? config["apiKey"] : credential?["key"])
             endpoint = "https://ollama.com/api/usage"
-        case .cursor, .deepseek: return nil
+        case .glm, .deepseek: return nil
         }
         headers["Authorization"] = "Bearer \(token)"
         try Task.checkCancellation()

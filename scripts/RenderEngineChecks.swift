@@ -37,10 +37,15 @@ struct RenderEngineChecks {
         Task { @MainActor in
             @MainActor func settle() async { try! await Task.sleep(for: .milliseconds(350)) }
             @MainActor func checkIdle() {
-                precondition(view.isPaused && scene.isPaused, "Single-frame idle must stop SpriteKit submissions after its first draw")
-                precondition(view.preferredFramesPerSecond == 60, "Animation cadence is not reduced")
+                precondition(!view.isPaused && !scene.isPaused, "Visible idle must refresh its Metal drawable, not freeze an old frame")
+                precondition(view.preferredFramesPerSecond == 15, "Only the static drawable refresh is reduced; compositor breathing stays smooth")
                 precondition(view.layer?.animation(forKey: key) != nil, "Breathing must keep running in the compositor")
                 precondition(view.layer?.magnificationFilter == .nearest, "Pixel art must retain nearest-neighbour scaling")
+                precondition(scene.petNode.size == scene.size && abs(abs(scene.petNode.xScale) - 1) < 0.0001
+                    && abs(scene.petNode.yScale - 1) < 0.0001, "Idle must restore the sprite's proportions after squashing effects")
+                let transform = view.layer!.presentation()!.transform
+                precondition(abs(transform.m11 - 1) < 0.0001 && (0.9799...1.0601).contains(transform.m22),
+                    "Compositor breathing must not flatten or widen the pet")
             }
             await settle()
             precondition(!view.isPaused && view.preferredFramesPerSecond == 15, "Static fallback must remain responsive")
@@ -50,7 +55,7 @@ struct RenderEngineChecks {
             precondition(!view.isPaused && view.preferredFramesPerSecond == 60 && view.layer?.animation(forKey: key) == nil,
                          "An old pending idle settle must not freeze a new combo")
             scene.playAnimation(for: .idle)
-            precondition(!view.isPaused, "Draw the new texture before pausing")
+            precondition(!view.isPaused, "Idle must continue drawing the restored texture")
             await settle()
             checkIdle()
             let loop = view.layer!.animation(forKey: key) as! CABasicAnimation
@@ -68,8 +73,28 @@ struct RenderEngineChecks {
             try! await Task.sleep(for: .seconds(8))
             print(String(format: "Single-frame idle CPU: %.2f%% (diagnostic, not a CI threshold)",
                 (cpuSeconds() - cpu) / (ProcessInfo.processInfo.systemUptime - start) * 100))
+            checkIdle()
+            let originalOrigin = panel.frame.origin
+            for screen in NSScreen.screens {
+                panel.setFrameOrigin(screen.visibleFrame.origin)
+                await settle()
+                checkIdle()
+                if let metal = view.layer as? CAMetalLayer {
+                    let pixels = view.bounds.width * panel.backingScaleFactor
+                    precondition(abs(metal.drawableSize.width - pixels) < 1
+                        && abs(metal.drawableSize.height - pixels) < 1, "Cross-display moves must preserve the drawable's aspect ratio and backing scale")
+                }
+            }
+            panel.setFrameOrigin(originalOrigin)
+            await settle()
 
-            let beginTime = loop.beginTime
+            scene.playAnimation(for: .stretch)
+            try! await Task.sleep(for: .milliseconds(200))
+            precondition(scene.petNode.yScale < 0.98, "Exercise an actual squashing effect before interrupting it")
+            scene.playAnimation(for: .idle)
+            await settle()
+            checkIdle()
+            let beginTime = view.layer!.animation(forKey: key)!.beginTime
             precondition(scene.setFacing(.left))
             precondition(!view.isPaused, "Facing changes must redraw even during composited idle")
             await settle()
@@ -78,7 +103,8 @@ struct RenderEngineChecks {
                          "Redraw must not restart the breathing cycle")
 
             scene.setRotation(.pi / 8)
-            precondition(!view.isPaused && view.layer!.animation(forKey: key) == nil, "Rotation returns to SpriteKit, preserving transform order")
+            precondition(!view.isPaused && view.preferredFramesPerSecond == 60 && view.layer!.animation(forKey: key) == nil,
+                         "Rotation returns to full-cadence SpriteKit, preserving transform order")
             await settle()
             precondition(abs(scene.petNode.zRotation - .pi / 8) < 0.0001)
             scene.playAnimation(for: .idle)
@@ -135,7 +161,7 @@ struct RenderEngineChecks {
             precondition(unattached.petNode.action(forKey: "RenderEngine.PetEffect") != nil, "Unattached previews retain the existing fallback")
             multiple.setRenderingVisible(false)
             panel.orderOut(nil)
-            print("PASS: real SpriteKit/Core Animation breathing, cadence, redraw, facing, rotation, wake/actions, resize, pack, visibility, detach and multi-frame fallback; no production data read")
+            print("PASS: real SpriteKit/Core Animation breathing, live idle refresh, proportions, cross-display drawable scale, interrupted squash, cadence, redraw, facing, rotation, wake/actions, resize, pack, visibility, detach and multi-frame fallback; no production data read")
             app.stop(nil)
             app.postEvent(NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [],
                 timestamp: 0, windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0)!, atStart: false)

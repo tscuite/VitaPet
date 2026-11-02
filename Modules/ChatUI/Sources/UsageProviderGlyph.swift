@@ -34,4 +34,18 @@ struct UsageProviderGlyph: View {
             Image(systemName: UsagePresentation.symbol(provider)).resizable().scaledToFit()
         }
     }
+
+    /// The vector PDFs keep a 4% export margin; undo it before applying the
+    /// upstream ProviderGlyph optical scale so visible sizes match its paths.
+    /// glm.pdf came from upstream's tight 24×24 zai.svg, so it takes the raw scale.
+    static func scale(for provider: UsageProviderID) -> CGFloat {
+        switch provider {
+        case .codex: 1.08 * 0.94
+        case .claude: 1.08 * 0.97
+        case .glm: 1.0
+        case .copilot: 1.08 * 0.96
+        case .ollama: 1.08 * 0.95
+        case .deepseek: 1
+        }
+    }
 }

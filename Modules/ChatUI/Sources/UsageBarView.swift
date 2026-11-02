@@ -81,7 +81,7 @@ public struct UsageBarView: View {
                 .disabled(!store.settings.monitoringEnabled || store.isRefreshing)
             Button(L10n.tr("usage.settings"), action: onOpenSettings)
             Divider()
-            Button(L10n.tr("usage.hide")) { store.updateSettings { $0.isVisible = false } }
+            Button(L10n.tr("usage.hide")) { store.updateSettings { $0.monitoringEnabled = false } }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(L10n.tr("usage.menu"))
@@ -134,15 +134,7 @@ private struct UsageProviderCell: View {
 
     // The vector PDFs retain a 4% export margin. Undo that before applying the
     // upstream ProviderGlyph optical scale so their visible sizes match its paths.
-    private var glyphScale: CGFloat {
-        switch provider {
-        case .codex: 1.08 * 0.94
-        case .claude, .cursor: 1.08 * 0.97
-        case .copilot: 1.08 * 0.96
-        case .ollama: 1.08 * 0.95
-        case .deepseek: 1
-        }
-    }
+    private var glyphScale: CGFloat { UsageProviderGlyph.scale(for: provider) }
 
     var body: some View {
         let scale = store.settings.scale
@@ -197,8 +189,8 @@ private struct UsageProviderCell: View {
         .onChange(of: showDetails) { _, shown in
             if shown { store.refreshBecauseSomeoneIsLooking() }
         }
-        .onChange(of: store.settings.isVisible) { _, visible in
-            if !visible { showDetails = false }
+        .onChange(of: store.settings.monitoringEnabled) { _, enabled in
+            if !enabled { showDetails = false }
         }
         .help("\(provider.displayName) · \(UsagePresentation.status(reading.status)) · \(valueDescription)")
         .accessibilityLabel(provider.displayName)
@@ -206,19 +198,13 @@ private struct UsageProviderCell: View {
         .accessibilityHint(L10n.tr("usage.details_hint"))
         .accessibilityAction(named: Text(L10n.tr("usage.show_details"))) { showDetails = true }
         .background {
-            if provider == .codex {
-                UsageHoverCard(isPresented: $showDetails, edge: store.settings.edge,
-                               surfaceStyle: store.settings.surfaceStyle, reduceTransparency: reduceTransparency) { tailOffset in
-                    UsageCodexReadingDetail(store: store, tailOffset: tailOffset)
-                        .environment(\.colorScheme, colorScheme)
-                        .environment(\.usageReduceTransparency, reduceTransparency)
-                        .environment(\.usageTooltipSurfaceStyle, store.settings.surfaceStyle)
-                }
-            } else {
-                UsageHoverPopover(isPresented: $showDetails, edge: store.settings.edge, reduceMotion: reduceMotion) {
-                    UsageReadingDetail(store: store, provider: provider, onOpenSettings: onOpenSettings)
-                        .environment(\.colorScheme, colorScheme)
-                }
+            // Every provider uses the original glass silhouette; DeepSeek's local ledger draws the same rows.
+            UsageHoverCard(isPresented: $showDetails, edge: store.settings.edge,
+                           surfaceStyle: store.settings.surfaceStyle, reduceTransparency: reduceTransparency) { tailOffset in
+                UsageCodexReadingDetail(store: store, provider: provider, tailOffset: tailOffset)
+                    .environment(\.colorScheme, colorScheme)
+                    .environment(\.usageReduceTransparency, reduceTransparency)
+                    .environment(\.usageTooltipSurfaceStyle, store.settings.surfaceStyle)
             }
         }
     }
@@ -273,80 +259,6 @@ private struct UsageSettingsOrb: View {
 }
 
 @MainActor
-private struct UsageReadingDetail: View {
-    @ObservedObject var store: UsageMonitorStore
-    let provider: UsageProviderID
-    let onOpenSettings: () -> Void
-
-    private var reading: UsageReading {
-        guard store.settings.monitoringEnabled else { return UsageReading(provider: provider, status: .disabled) }
-        return store.readings.first { $0.provider == provider } ?? UsageReading(provider: provider)
-    }
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 30)) { context in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Text(provider.displayName).font(.headline)
-                        Spacer()
-                        Text(UsagePresentation.status(reading.status)).font(.caption).foregroundStyle(.secondary)
-                    }
-                    if reading.status == .disabled {
-                        Text(L10n.tr("usage.off_hint")).font(.callout)
-                    } else {
-                        if provider == .deepseek {
-                            UsageLocalSpendDetail(spend: reading.localSpend)
-                        } else if reading.limits.isEmpty && reading.detail == nil {
-                            Text(L10n.tr("usage.no_reading")).foregroundStyle(.secondary)
-                        }
-                        ForEach(reading.limits) { limit in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(limit.title).font(.subheadline.weight(.medium))
-                                Text("\(L10n.tr("usage.used")) \(UsagePresentation.percent(limit.usedFraction))")
-                                    .monospacedDigit()
-                                if let reset = limit.resetsAt {
-                                    Text(UsagePresentation.countdown(to: reset, now: context.date))
-                                    Text(reset.formatted(date: .abbreviated, time: .shortened)).foregroundStyle(.secondary)
-                                }
-                            }
-                            .font(.caption)
-                        }
-                        if let detail = reading.detail, !detail.isEmpty {
-                            Text(UsagePresentation.detail(detail)).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                        }
-                        if let updated = reading.updatedAt {
-                            HStack(spacing: 4) {
-                                Text(L10n.tr("usage.updated"))
-                                Text(updated, style: .relative)
-                                Text(L10n.tr("usage.ago"))
-                            }
-                            .font(.caption).foregroundStyle(.secondary)
-                            Text(updated.formatted(date: .abbreviated, time: .standard))
-                                .font(.caption2).foregroundStyle(.secondary)
-                        } else {
-                            Text(L10n.tr("usage.never_updated")).font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    if let error = store.settingsError {
-                        Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
-                    }
-                    Divider()
-                    HStack {
-                        Button(store.refreshing.contains(provider) ? L10n.tr("usage.refreshing") : L10n.tr("usage.refresh")) { store.refresh(provider) }
-                            .disabled(!store.settings.monitoringEnabled || store.refreshing.contains(provider))
-                        Spacer()
-                        Button(L10n.tr("usage.settings"), action: onOpenSettings)
-                    }
-                }
-                .padding(16)
-            }
-            .frame(width: 320, height: 360)
-        }
-    }
-}
-
-@MainActor
 struct UsageLocalSpendDetail: View {
     var spend: UsageLocalSpend?
     var body: some View {
@@ -356,22 +268,9 @@ struct UsageLocalSpendDetail: View {
             LabeledContent(L10n.tr("usage.spend.last7days"), value: UsagePresentation.budgetPercent(spend?.last7Days.usd))
             LabeledContent(L10n.tr("usage.spend.last30days"), value: UsagePresentation.budgetPercent(spend?.last30Days.usd))
             if let spend {
-                Text(String(format: L10n.tr("usage.spend.scan"), spend.scannedFiles, spend.discoveredFiles, spend.total.records))
-                    .foregroundStyle(.secondary)
-                if spend.total.records == 0 {
-                    Text(L10n.tr(spend.discoveredFiles == 0 ? "usage.spend.no_logs" : "usage.spend.no_records"))
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text(String(format: L10n.tr("usage.spend.sources"), spend.total.recorded, spend.total.configured,
-                                spend.total.reference, spend.total.unpriced))
-                        .foregroundStyle(.secondary)
-                    if spend.total.reference > 0 {
-                        Text(L10n.tr("usage.spend.reference")).foregroundStyle(.secondary)
-                    }
+                ForEach(UsagePresentation.spendNotes(spend), id: \.self) { line in
+                    Text(line).foregroundStyle(.secondary)
                 }
-            }
-            if spend?.incomplete == true {
-                Label(L10n.tr("usage.spend.incomplete"), systemImage: "exclamationmark.triangle").foregroundStyle(.secondary)
             }
         }
         .font(.caption).monospacedDigit()
@@ -381,10 +280,11 @@ struct UsageLocalSpendDetail: View {
 @MainActor
 private struct UsageCodexReadingDetail: View {
     @ObservedObject var store: UsageMonitorStore
+    var provider: UsageProviderID = .codex
     var tailOffset: CGFloat
     private var reading: UsageReading {
-        guard store.settings.monitoringEnabled else { return UsageReading(provider: .codex, status: .disabled) }
-        return store.readings.first { $0.provider == .codex } ?? UsageReading(provider: .codex)
+        guard store.settings.monitoringEnabled else { return UsageReading(provider: provider, status: .disabled) }
+        return store.readings.first { $0.provider == provider } ?? UsageReading(provider: provider)
     }
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in

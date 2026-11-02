@@ -35,7 +35,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let resetPomodoroAction: @MainActor () -> Void
     private let skipPomodoroAction: @MainActor () -> Void
     private let statusItem: NSStatusItem
+    private let shuttleMenuController: ShuttleMenuController
     private let addPetMenuItem = NSMenuItem()
+    private let removePetMenuItem = NSMenuItem()
     private let toggleMenuItem = NSMenuItem()
     private let miniGamesMenuItem = NSMenuItem(title: L10n.menuMiniGames, action: nil, keyEquivalent: "")
     private let pomodoroMenuItem = NSMenuItem(title: L10n.menuPomodoro, action: nil, keyEquivalent: "")
@@ -92,7 +94,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         debugTriggerAnimation: @escaping @MainActor (String) -> Void = { _ in },
         debugTriggerBehavior: @escaping @MainActor (String) -> Void = { _ in },
         debugListBehaviors: @escaping @MainActor () -> [String] = { [] },
-        debugTriggerInteraction: @escaping @MainActor () -> Void = {}
+        debugTriggerInteraction: @escaping @MainActor () -> Void = {},
+        shuttleMenuController: ShuttleMenuController = ShuttleMenuController()
     ) {
         self.chatController = chatController
         self.isPetVisible = isPetVisible
@@ -114,6 +117,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.debugTriggerBehavior = debugTriggerBehavior
         self.debugListBehaviors = debugListBehaviors
         self.debugTriggerInteraction = debugTriggerInteraction
+        self.shuttleMenuController = shuttleMenuController
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         super.init()
@@ -128,7 +132,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         updateToggleTitle()
         updatePetSizeMenuState()
         addPetMenuItem.isEnabled = canAddPet()
-        updateRemovePetMenu(in: menu)
+        updateRemovePetMenu()
         updateMiniGamesMenu(in: menu)
         updatePomodoroMenu()
         updateUsageMenu()
@@ -237,9 +241,17 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         addMenuItem(to: menu, title: L10n.tr("home.title"), symbolName: "house", action: #selector(openCompanionHome), keyEquivalent: "1")
         addMenuItem(to: menu, title: L10n.menuChat, symbolName: "bubble.left", action: #selector(openChat))
-        addMenuItem(to: menu, title: L10n.menuSettings, symbolName: "gearshape", action: #selector(openSettings), keyEquivalent: ",")
-        addMenuItem(to: menu, title: L10n.menuActivityLog, symbolName: "list.bullet.rectangle", action: #selector(openActivityLog))
-        addMenuItem(to: menu, title: L10n.menuStatistics, symbolName: "chart.bar", action: #selector(openStatistics))
+        toggleMenuItem.target = self
+        toggleMenuItem.action = #selector(togglePetVisibility)
+        menu.addItem(toggleMenuItem)
+        menu.addItem(.separator())
+
+        let pluginsItem = NSMenuItem(title: L10n.menuPlugins, action: nil, keyEquivalent: "")
+        pluginsItem.image = NSImage(systemSymbolName: "puzzlepiece.extension", accessibilityDescription: nil)
+        let pluginsMenu = NSMenu(title: pluginsItem.title)
+        pluginsMenu.autoenablesItems = false
+        pluginsItem.submenu = pluginsMenu
+        menu.addItem(pluginsItem)
 
         let usageItem = NSMenuItem(title: L10n.tr("usage.menu.title"), action: nil, keyEquivalent: "")
         usageItem.image = NSImage(systemSymbolName: "gauge.with.dots.needle.50percent", accessibilityDescription: nil)
@@ -255,40 +267,49 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         usageMenu.addItem(usageRefreshMenuItem)
         addMenuItem(to: usageMenu, title: L10n.tr("usage.menu.settings"), symbolName: "gearshape", action: #selector(openUsageSettings))
         usageItem.submenu = usageMenu
-        menu.addItem(usageItem)
+        pluginsMenu.addItem(usageItem)
+        pluginsMenu.addItem(shuttleMenuController.menuItem)
         updateUsageMenu()
-
-        menu.addItem(.separator())
-
-        toggleMenuItem.target = self
-        toggleMenuItem.action = #selector(togglePetVisibility)
-        menu.addItem(toggleMenuItem)
-
-        addPetMenuItem.title = L10n.menuAddPet
-        addPetMenuItem.image = NSImage(systemSymbolName: "plus.circle", accessibilityDescription: nil)
-        addPetMenuItem.target = self
-        addPetMenuItem.action = #selector(addPet)
-        menu.addItem(addPetMenuItem)
-
-        let removePetItem = NSMenuItem(title: L10n.menuRemovePet, action: nil, keyEquivalent: "")
-        removePetItem.image = NSImage(systemSymbolName: "minus.circle", accessibilityDescription: nil)
-        removePetItem.submenu = NSMenu(title: L10n.menuRemovePet)
-        removePetItem.tag = 999
-        menu.addItem(removePetItem)
-
-        miniGamesMenuItem.image = NSImage(systemSymbolName: "gamecontroller", accessibilityDescription: nil)
-        miniGamesMenuItem.submenu = NSMenu(title: L10n.menuMiniGames)
-        miniGamesMenuItem.tag = 997
-        menu.addItem(miniGamesMenuItem)
 
         pomodoroMenuItem.image = NSImage(systemSymbolName: "timer", accessibilityDescription: nil)
         pomodoroMenuItem.submenu = makePomodoroMenu()
         pomodoroMenuItem.tag = 996
         menu.addItem(pomodoroMenuItem)
 
+        miniGamesMenuItem.image = NSImage(systemSymbolName: "gamecontroller", accessibilityDescription: nil)
+        miniGamesMenuItem.submenu = NSMenu(title: L10n.menuMiniGames)
+        miniGamesMenuItem.tag = 997
+        menu.addItem(miniGamesMenuItem)
+        menu.addItem(.separator())
+
+        let petManagementItem = NSMenuItem(title: L10n.settingsPetManagement, action: nil, keyEquivalent: "")
+        petManagementItem.image = NSImage(systemSymbolName: "pawprint", accessibilityDescription: nil)
+        let petMenu = NSMenu(title: petManagementItem.title)
+        petMenu.autoenablesItems = false
+        petMenu.delegate = self
+        petManagementItem.submenu = petMenu
+        menu.addItem(petManagementItem)
+
+        addPetMenuItem.title = L10n.menuAddPet
+        addPetMenuItem.image = NSImage(systemSymbolName: "plus.circle", accessibilityDescription: nil)
+        addPetMenuItem.target = self
+        addPetMenuItem.action = #selector(addPet)
+        petMenu.addItem(addPetMenuItem)
+
+        removePetMenuItem.title = L10n.menuRemovePet
+        removePetMenuItem.image = NSImage(systemSymbolName: "minus.circle", accessibilityDescription: nil)
+        removePetMenuItem.submenu = NSMenu(title: L10n.menuRemovePet)
+        petMenu.addItem(removePetMenuItem)
+
+        petMenu.addItem(.separator())
         petSizeMenuItem.image = NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: nil)
         petSizeMenuItem.submenu = makePetSizeMenu()
-        menu.addItem(petSizeMenuItem)
+        petMenu.addItem(petSizeMenuItem)
+
+        menu.addItem(.separator())
+        addMenuItem(to: menu, title: L10n.menuActivityLog, symbolName: "list.bullet.rectangle", action: #selector(openActivityLog))
+        addMenuItem(to: menu, title: L10n.menuStatistics, symbolName: "chart.bar", action: #selector(openStatistics))
+        addMenuItem(to: menu, title: L10n.menuSettings, symbolName: "gearshape", action: #selector(openSettings), keyEquivalent: ",")
 
         #if DEBUG
         menu.addItem(.separator())
@@ -413,8 +434,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         }
     }
 
-    private func updateRemovePetMenu(in menu: NSMenu) {
-        guard let removePetItem = menu.items.first(where: { $0.tag == 999 }) else { return }
+    private func updateRemovePetMenu() {
         let pets = listPets()
         let submenu = NSMenu(title: L10n.menuRemovePet)
         if pets.count > 1 {
@@ -429,8 +449,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             item.isEnabled = false
             submenu.addItem(item)
         }
-        removePetItem.submenu = submenu
-        removePetItem.isEnabled = pets.count > 1
+        removePetMenuItem.submenu = submenu
+        removePetMenuItem.isEnabled = pets.count > 1
     }
 
     @objc

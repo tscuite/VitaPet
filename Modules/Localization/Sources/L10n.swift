@@ -7,6 +7,7 @@ public enum L10n {
     }
 
     public static var menuChat: String { tr("menu.chat") }
+    public static var menuPlugins: String { tr("menu.plugins") }
     public static var menuSettings: String { tr("menu.settings") }
     public static var menuActivityLog: String { tr("menu.activity_log") }
     public static var menuPetSize: String { tr("menu.pet_size") }

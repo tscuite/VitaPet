@@ -15,7 +15,22 @@ enum UsageTooltipCopy {
         case "Weekly limit": return L10n.tr("usage.codex.weekly")
         case "Monthly limit": return L10n.tr("usage.codex.monthly")
         case "Credits": return L10n.tr("usage.codex.credits")
+        // GLM's own window names, matching upstream's wording.
+        case "Weekly": return L10n.tr("usage.glm.weekly")
+        case "MCP (1 month)": return L10n.tr("usage.glm.mcp")
+        // Claude's session/weekly wording and Ollama's metered windows.
+        case "5h session", "session": return L10n.tr("usage.codex.current_session")
+        case "Weekly · all models", "weekly all": return L10n.tr("usage.claude.all_models")
+        case "Monthly usage": return L10n.tr("usage.ollama.monthly")
+        case "Session usage": return L10n.tr("usage.ollama.session")
+        case "Weekly usage": return L10n.tr("usage.ollama.weekly")
         default:
+            if title.hasSuffix(" h)") {
+                return format("usage.glm.usage_hours", String(title.dropLast(3)).replacingOccurrences(of: "Usage (", with: ""))
+            }
+            if title.hasSuffix(" wk)") {
+                return format("usage.glm.usage_weeks", String(title.dropLast(4)).replacingOccurrences(of: "Usage (", with: ""))
+            }
             for (suffix, key) in [("m limit", "minutes"), ("h limit", "hours"), ("d limit", "days")] {
                 if title.hasSuffix(suffix) {
                     return format("usage.codex.limit_\(key)", String(title.dropLast(suffix.count)))

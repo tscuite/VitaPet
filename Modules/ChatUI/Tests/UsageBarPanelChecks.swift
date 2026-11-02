@@ -182,7 +182,7 @@ struct UsageBarPanelChecks {
         try! FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let directory = output.appendingPathComponent("fixture-settings")
         print("Fixture artifacts: \(output.path)")
-        let values: [UsageProviderID: Double] = [.cursor: 0.99, .ollama: 0.005]
+        let values: [UsageProviderID: Double] = [.glm: 0.99, .ollama: 0.005]
         let fixedNow = Date(timeIntervalSince1970: 1_780_000_000)
         let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("UsageMonitor/Tests/Fixtures")
@@ -383,6 +383,59 @@ struct UsageBarPanelChecks {
             cardPanel.setContentSize(cardHost.fittingSize)
             capture("codex-not-connected", cardHost)
             print("PASS: original Codex quota/used-left/pace, plan, reset-credit and token-stat/chart card; bilingual themes, grouped extras, top/bottom tail and empty state")
+            // GLM rides the same notch shell: plan subtitle, session/weekly/MCP rows, bilingual window names.
+            let glmJSON = #"{"code":200,"success":true,"data":{"level":"pro","limits":[{"type":"CREDIT_LIMIT","unit":3,"number":5,"percentage":16,"nextResetTime":1780009000000},{"type":"CREDIT_LIMIT","unit":6,"number":1,"percentage":3,"nextResetTime":1780268400000},{"type":"TIME_LIMIT","percentage":4}]}}"#
+            let glmReading = try! UsageParsing.parse(Data(glmJSON.utf8), provider: .glm, now: fixedNow)
+            precondition(glmReading.limits.map(\.id) == ["session", "weekly", "mcp"] && glmReading.plan == "pro", "GLM reading fixture")
+            for locale in ["en", "zh-Hans"] {
+                L10n.locale = locale
+                // Identical view inputs would let SwiftUI skip the body; re-id per locale so text re-resolves.
+                cardHost.rootView = AnyView(UsageCodexTooltip(reading: glmReading, now: fixedNow)
+                    .environment(\.usageTooltipSurfaceStyle, .glass).id(locale))
+                cardPanel.appearance = NSAppearance(named: .darkAqua)
+                cardPanel.setContentSize(cardHost.fittingSize)
+                try! await Task.sleep(for: .milliseconds(120))
+                precondition(abs(cardHost.bounds.width - UsageTooltipLayout.cardWidth) < 1, "GLM card keeps the original card width")
+                capture("glm-card-\(locale)", cardHost)
+            }
+            L10n.locale = "en"
+            let glmEmpty = UsageCodexTooltip(reading: UsageReading(provider: .glm), now: fixedNow)
+            cardHost.rootView = AnyView(glmEmpty.environment(\.usageTooltipSurfaceStyle, .solid))
+            cardPanel.setContentSize(cardHost.fittingSize)
+            capture("glm-not-connected", cardHost)
+            print("PASS: GLM card reuses the original notch shell with plan subtitle, session/weekly/MCP rows and bilingual window names")
+            // Claude and Ollama ride the same shell now, with upstream's window wording.
+            let claudeReading = try! UsageParsing.parse(Data(#"{"five_hour":{"utilization":35,"resets_at":"2026-05-30T18:00:00.000Z"},"seven_day":{"utilization":62,"resets_at":"2026-06-01T00:00:00.000Z"},"seven_day_sonnet":{"utilization":40}}"#.utf8), provider: .claude, now: fixedNow)
+            let ollamaReading = try! UsageParsing.parse(Data(#"{"limits":{"monthly":{"usage":0.152},"session":{"usage":0.05},"weekly":{"usage":0.4}}}"#.utf8), provider: .ollama, now: fixedNow)
+            precondition(claudeReading.headline?.id.hasPrefix("session") == true && ollamaReading.limits.count == 3, "claude/ollama reading fixtures")
+            for (name, reading) in [("claude", claudeReading), ("ollama", ollamaReading)] {
+                for locale in ["en", "zh-Hans"] {
+                    L10n.locale = locale
+                    cardHost.rootView = AnyView(UsageCodexTooltip(reading: reading, now: fixedNow)
+                        .environment(\.usageTooltipSurfaceStyle, .glass).id(name + locale))
+                    cardPanel.appearance = NSAppearance(named: .darkAqua)
+                    cardPanel.setContentSize(cardHost.fittingSize)
+                    try! await Task.sleep(for: .milliseconds(120))
+                    precondition(abs(cardHost.bounds.width - UsageTooltipLayout.cardWidth) < 1, "\(name) card keeps the original card width")
+                    capture("\(name)-card-\(locale)", cardHost)
+                }
+            }
+            L10n.locale = "en"
+            print("PASS: Claude and Ollama cards reuse the original notch shell with localized window names")
+            // DeepSeek's local ledger rides the same shell: three budget rows plus the money line and notes.
+            let spendCardReading = UsageReading(provider: .deepseek, status: .ready, updatedAt: fixedNow, localSpend: spendFixture)
+            for locale in ["en", "zh-Hans"] {
+                L10n.locale = locale
+                cardHost.rootView = AnyView(UsageCodexTooltip(reading: spendCardReading, now: fixedNow)
+                    .environment(\.usageTooltipSurfaceStyle, .glass).id(locale))
+                cardPanel.appearance = NSAppearance(named: .darkAqua)
+                cardPanel.setContentSize(cardHost.fittingSize)
+                try! await Task.sleep(for: .milliseconds(120))
+                precondition(abs(cardHost.bounds.width - UsageTooltipLayout.cardWidth) < 1, "DeepSeek card keeps the original card width")
+                capture("deepseek-card-\(locale)", cardHost)
+            }
+            L10n.locale = "en"
+            print("PASS: DeepSeek card reuses the original notch shell with budget rows, money line and ledger notes")
             let copilotCases: [(String, String, Double?)] = [
                 ("metered", #"{"quota_snapshots":{"premium_interactions":{"entitlement":300,"percent_remaining":20}}}"#, 0.8),
                 ("chat-fallback", #"{"quota_snapshots":{"premium_interactions":{"unlimited":true},"chat":{"percent_remaining":20}}}"#, 0.8),
@@ -527,7 +580,7 @@ struct UsageBarPanelChecks {
             capture("strip-empty", host)
             await store.stop()
             let failureStore = UsageMonitorStore(directory: directory.appendingPathComponent("failures"), fetch: { provider in
-                let status: UsageReadingStatus = provider == .codex ? .stale : provider == .cursor ? .rateLimited : .failed
+                let status: UsageReadingStatus = provider == .codex ? .stale : provider == .glm ? .rateLimited : .failed
                 return UsageReading(provider: provider, status: status,
                     limits: provider == .codex ? [UsageLimit(id: "cached", title: "Cached fixture", usedFraction: 1.1)] : [],
                     updatedAt: provider == .codex ? Date().addingTimeInterval(-600) : nil,
@@ -564,7 +617,7 @@ struct UsageBarPanelChecks {
             try! await Task.sleep(for: .milliseconds(200))
             precondition(!app.isActive, "Controller startup must begin in an inactive harness")
             // Exercise the actual app controller with fixture storage, never its default directory.
-            store.updateSettings { $0.providers = [.codex, .cursor]; $0.isVisible = true }
+            store.updateSettings { $0.providers = [.codex, .glm]; $0.monitoringEnabled = true }
             let shell = UsageBarController(store: store)
             shell.start()
             try! await Task.sleep(for: .milliseconds(200))
@@ -592,7 +645,7 @@ struct UsageBarPanelChecks {
             precondition(store.refreshing == [.codex], "Actual UsageBarController hosting view must route icon clicks")
             try! await Task.sleep(for: .milliseconds(1000))
             let shellAfter = await reads.snapshot()
-            precondition(shellAfter[.codex] == shellBefore[.codex, default: 0] + 1 && shellAfter[.cursor] == shellBefore[.cursor])
+            precondition(shellAfter[.codex] == shellBefore[.codex, default: 0] + 1 && shellAfter[.glm] == shellBefore[.glm])
             store.updateSettings { $0.monitoringEnabled = false }
             try! await Task.sleep(for: .milliseconds(100))
             click(anchors(shellHost)[0], in: shellPanel)
@@ -612,6 +665,8 @@ struct UsageBarPanelChecks {
             store.updateSettings { $0.opacity = 0.8 }
             shell.showSettings()
             precondition(shellSettings.isVisible && shellSettings.contentView != nil, "Reopening settings rebuilds from current values")
+            store.updateSettings { $0.monitoringEnabled = true }
+            try! await Task.sleep(for: .milliseconds(100))
             shell.toggleVisibility()
             try! await Task.sleep(for: .milliseconds(100))
             precondition(!shellPanel.isVisible, "Hide action must update the real panel")

@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CryptoKit
 import Foundation
 import SQLite3
 @testable import UsageMonitor
@@ -130,10 +131,28 @@ private struct UsageMonitorChecks {
         check(claude.headline?.usedFraction == 0 && claude.limits[1].usedFraction == 1.02, "Claude zero and overage")
         let modernClaude = try parsed(.claude, #"{"limits":[{"kind":"session","percent":79.9,"resets_at":"2026-10-01T00:00:00Z"}],"five_hour":{"utilization":80}}"#)
         check(modernClaude.limits.count == 1 && modernClaude.headline!.usedFraction! < 0.8, "Claude modern schema wins, no duplicate")
-        let cursor = try parsed(.cursor, #"{"individualUsage":{"plan":{"autoPercentUsed":0,"apiPercentUsed":19,"totalPercentUsed":9.5}},"billingCycleEnd":"2026-10-01T00:00:00Z"}"#)
-        check(cursor.headline?.usedFraction == 0 && cursor.limits[1].usedFraction == 0.19, "Cursor independent allowance percentages")
-        let enterprise = try parsed(.cursor, #"{"individualUsage":{"overall":{"enabled":true,"used":80,"limit":100}}}"#)
-        check(enterprise.headline?.usedFraction == 0.8, "Cursor enterprise denominator")
+        let glm = try parsed(.glm, #"{"code":200,"success":true,"data":{"level":"pro","limits":[{"type":"TOKENS_LIMIT","unit":3,"number":5,"percentage":12.5,"nextResetTime":1788682200000},{"type":"TOKENS_LIMIT","unit":6,"number":1,"percentage":8.1},{"type":"TIME_LIMIT","percentage":4.0}]}}"#)
+        check(glm.limits.map(\.id) == ["session", "weekly", "mcp"] && glm.headlineID == "session", "GLM session-first window order")
+        check(glm.plan == "pro" && glm.limits[0].duration == 18000 && glm.limits[2].duration == nil, "GLM plan level and window durations")
+        check(glm.headline?.usedFraction == 0.125 && glm.limits[0].resetsAt == Date(timeIntervalSince1970: 1_788_682_200), "GLM percentages and millisecond resets")
+        let credit = try parsed(.glm, #"{"code":200,"success":true,"data":{"level":"lite","limits":[{"type":"CREDIT_LIMIT","unit":6,"number":1,"percentage":17},{"type":"CREDIT_LIMIT","unit":3,"number":5,"percentage":1}]}}"#)
+        check(credit.limits.map(\.id) == ["session", "weekly"] && credit.plan == "lite", "GLM credit plan uses the same window identities")
+        let bare = try parsed(.glm, #"{"data":{"limits":[{"type":"TIME_LIMIT","percentage":128}]}}"#)
+        check(bare.limits.count == 1 && bare.limits[0].usedFraction == 1.28 && bare.limits[0].resetsAt == nil, "GLM missing envelope reads as success; over-limit and reset-less rows kept")
+        do {
+            _ = try parsed(.glm, #"{"code":401,"msg":"token expired or incorrect","success":false}"#)
+            preconditionFailure("GLM 401 envelope must throw")
+        } catch let failure as UsageFailure {
+            guard case .notConnected = failure else { preconditionFailure("expired GLM token reads as signed out") }
+        }
+        do {
+            _ = try parsed(.glm, #"{"code":429,"success":false}"#)
+            preconditionFailure("GLM 429 envelope must throw")
+        } catch let failure as UsageFailure {
+            guard case .rateLimited = failure else { preconditionFailure("throttled GLM answer reads as rate limited") }
+        }
+        rejects({ _ = try parsed(.glm, #"{"code":1305,"msg":"overloaded","success":false}"#) }, "Unrecognised GLM business code")
+        rejects({ _ = try parsed(.glm, #"{"code":200,"success":true,"data":{"limits":[{"type":"TIME_LIMIT","currentValue":40}]}}"#) }, "GLM row without a percentage is dropped, not scaled")
         let copilot = try parsed(.copilot, #"{"quota_snapshots":{"premium_interactions":{"entitlement":100,"remaining":20},"chat":{"unlimited":true}},"quota_reset_date":"2026-10-01"}"#)
         check(copilot.headline?.usedFraction == 0.8 && copilot.limits[1].usedFraction == nil, "Copilot real quota/unlimited")
         rejects({ _ = try parsed(.copilot, #"{"quota_snapshots":{"premium_interactions":{"entitlement":100}}}"#) }, "Missing used and remaining cannot invent 0%")
@@ -141,8 +160,13 @@ private struct UsageMonitorChecks {
         check(ollama.headline?.usedFraction == 0.152 && ollama.headline?.resetsAt == nil, "Ollama native fraction, no fabricated reset")
         let zeroOllama = try parsed(.ollama, #"{"limits":{"monthly":{"usage":0}}}"#)
         check(zeroOllama.headline?.usedFraction == 0, "Ollama legitimate zero")
+        let ollamaSpend = try parsed(.ollama, #"{"range":"7d","totals":{"request_count":3,"usage_usd":42.5}}"#)
+        check(ollamaSpend.headline?.id == "spend" && ollamaSpend.headline?.usedFraction == 0.425, "Ollama spend aggregates map to the fixed US$100 budget")
+        let zeroSpend = try parsed(.ollama, #"{"range":"30d","totals":{"usage_usd":0}}"#)
+        check(zeroSpend.headline?.title == "Last 30 days" && zeroSpend.headline?.usedFraction == 0, "Ollama spend zero stays a real zero")
         rejects({ _ = try parsed(.deepseek, #"{"is_available":true,"balance_infos":[{"currency":"USD","total_balance":"12.34"}]}"#) }, "Shared DeepSeek balance is no longer a usage reading")
         for (provider, json) in [(UsageProviderID.codex, "{}"), (.ollama, #"{"limits":{"monthly":{"usage":true}}}"#),
+                                  (.ollama, #"{"totals":{"usage_usd":"x"}}"#),
                                   (.deepseek, #"{"balance_infos":[{"currency":"USD","total_balance":"2invalid"}]}"#)] {
             rejects({ _ = try parsed(provider, json) }, "Malformed data must fail safely")
         }
@@ -241,36 +265,49 @@ private struct UsageMonitorChecks {
         check(ghRequest.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-token", "Only the existing active-host file token is used")
         let unchangedHosts = try Data(contentsOf: hostURL)
         check(unchangedHosts == fileToken, "gh config is never rewritten or migrated")
-        let agentDir = root.appendingPathComponent(".cursor")
-        try FileManager.default.createDirectory(at: agentDir, withIntermediateDirectories: true)
-        try Data(#"{"authInfo":{"authId":"cli-account"}}"#.utf8).write(to: agentDir.appendingPathComponent("cli-config.json"))
-        rejects({ _ = try UsageCredentials.request(.cursor, home: root, env: [:]) }, "Missing editor no longer falls back to cursor-agent/Keychain")
-        let dbURL = root.appendingPathComponent("cursor-fixture.vscdb")
-        var db: OpaquePointer?
-        check(sqlite3_open(dbURL.path, &db) == SQLITE_OK, "create SQLite fixture")
-        defer { sqlite3_close(db) }
-        check(sqlite3_exec(db, "PRAGMA journal_mode=WAL; CREATE TABLE ItemTable(key TEXT PRIMARY KEY,value TEXT); INSERT INTO ItemTable VALUES ('cursorAuth/accessToken','fixture-token'),('cursorAuth/stripeMembershipAuthId','fixture-account');", nil, nil, nil) == SQLITE_OK, "populate WAL fixture")
-        let cookie = try UsageCredentials.cursor(dbURL)
-        check(cookie == "WorkosCursorSessionToken=fixture-account::fixture-token", "Cursor reads live WAL read-only")
-        let editorURL = root.appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
-        try FileManager.default.createDirectory(at: editorURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        var editorDB: OpaquePointer?
-        check(sqlite3_open(editorURL.path, &editorDB) == SQLITE_OK, "Create editor fixture")
-        check(sqlite3_exec(editorDB, "CREATE TABLE ItemTable(key TEXT PRIMARY KEY,value TEXT); INSERT INTO ItemTable VALUES ('cursorAuth/accessToken','fixture-token'),('cursorAuth/stripeMembershipAuthId','fixture-account');", nil, nil, nil) == SQLITE_OK, "Populate editor fixture")
-        sqlite3_close(editorDB)
-        let editorRequest = try UsageCredentials.request(.cursor, home: root, env: [:])
-        check(editorRequest.value(forHTTPHeaderField: "Cookie") == cookie, "Existing Cursor editor file remains supported")
+        // GLM borrows a coding tool's existing Z.ai plan key; each source is a plain existing file.
+        rejects({ _ = try UsageCredentials.request(.glm, home: root, env: [:]) }, "Missing GLM sources stay disconnected")
+        let claudeSettings = root.appendingPathComponent(".claude/settings.json")
+        try FileManager.default.createDirectory(at: claudeSettings.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"env":{"ANTHROPIC_AUTH_TOKEN":"fixture-glm-key","ANTHROPIC_BASE_URL":"https://open.bigmodel.cn/api/anthropic"}}"#.utf8).write(to: claudeSettings)
+        let glmRequest = try UsageCredentials.request(.glm, home: root, env: [:])
+        check(glmRequest.url?.absoluteString == "https://open.bigmodel.cn/api/monitor/usage/quota/limit", "GLM monitor lives at the console root, not the anthropic path")
+        check(glmRequest.value(forHTTPHeaderField: "Authorization") == "fixture-glm-key", "GLM takes the key raw, no Bearer scheme")
+        // An Anthropic-aimed token is not a GLM key; the next source must take over instead.
+        try Data(#"{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-ant","ANTHROPIC_BASE_URL":"https://api.anthropic.com"}}"#.utf8).write(to: claudeSettings)
+        let zcodeConfig = root.appendingPathComponent(".zcode/v2/config.json")
+        try FileManager.default.createDirectory(at: zcodeConfig.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"provider":{"builtin:zai-coding-plan":{"enabled":true,"options":{"apiKey":"fixture-zcode-key","baseURL":"https://api.z.ai/api/anthropic"}}}}"#.utf8).write(to: zcodeConfig)
+        let zcodeRequest = try UsageCredentials.request(.glm, home: root, env: [:])
+        check(zcodeRequest.url?.host == "api.z.ai" && zcodeRequest.value(forHTTPHeaderField: "Authorization") == "fixture-zcode-key", "ZCode plan key wins over a non-Z.ai Claude Code token")
+        // ZCode's newer credentials.json encrypts every value at rest; decrypt with the env secret.
+        func zcodeSeal(_ plain: String, secret: String) -> String {
+            let key = SymmetricKey(data: SHA256.hash(data: Data(secret.utf8)))
+            let sealed = try! AES.GCM.seal(Data(plain.utf8), using: key)
+            func b64(_ data: Data) -> String {
+                data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+            }
+            return "enc:v1:\(b64(Data(sealed.nonce))).\(b64(sealed.tag)).\(b64(sealed.ciphertext))"
+        }
+        let zcodeCredentials = root.appendingPathComponent(".zcode/v2/credentials.json")
+        let secret = "fixture-zcode-secret"
+        let sealedKey = zcodeSeal("fixture-zcode-account-key", secret: secret)
+        try JSONSerialization.data(withJSONObject: ["account-provider:coding-plan:zai:account:abc:api-key": sealedKey]).write(to: zcodeCredentials)
+        try FileManager.default.removeItem(at: zcodeConfig)
+        let decrypted = try UsageCredentials.request(.glm, home: root, env: ["ZCODE_CREDENTIAL_SECRET": secret])
+        check(decrypted.value(forHTTPHeaderField: "Authorization") == "fixture-zcode-account-key", "Encrypted ZCode account key decrypts with the env secret")
+        let openCode = root.appendingPathComponent(".local/share/opencode/auth.json")
+        try FileManager.default.createDirectory(at: openCode.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"zhipu":{"type":"api","key":"fixture-opencode-key"}}"#.utf8).write(to: openCode)
+        let fellThrough = try UsageCredentials.request(.glm, home: root, env: ["ZCODE_CREDENTIAL_SECRET": "wrong-secret"])
+        check(fellThrough.value(forHTTPHeaderField: "Authorization") == "fixture-opencode-key" && fellThrough.url?.host == "open.bigmodel.cn", "Undecryptable value falls through to OpenCode's China console, never guessed")
         let oversized = root.appendingPathComponent("oversized")
         try Data(repeating: 0, count: UsageCredentials.maxBytes + 1).write(to: oversized)
         rejects({ _ = try UsageCredentials.file(oversized) }, "Bounded local file")
         rejects({ _ = try UsageCredentials.file(root) }, "Directories are not credential files")
-        let absentDB = root.appendingPathComponent("absent.vscdb")
-        rejects({ _ = try UsageCredentials.cursor(absentDB) }, "Missing Cursor sign-in")
-        check(!FileManager.default.fileExists(atPath: absentDB.path), "Read-only SQLite never creates missing DB")
         let fifo = root.appendingPathComponent("fifo")
         check(mkfifo(fifo.path, 0o600) == 0, "Create bounded IO fixture")
         rejects({ _ = try UsageCredentials.file(fifo) }, "FIFO must not block credential file read")
-        rejects({ _ = try UsageCredentials.cursor(fifo) }, "FIFO must not block SQLite open")
     }
 
     static func piCredentialChecks(_ root: URL) async throws {
@@ -350,14 +387,21 @@ private struct UsageMonitorChecks {
         try save(["providers": ["ollama": ["baseUrl": "https://ollama.com/v1", "apiKey": "fixture-literal"]]], modelsURL)
         let literal = try UsageCredentials.context(.ollama, home: home, env: [:])
         check(literal.request.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-literal", "Existing direct-provider literal key supported")
+        // Ollama's own key file outranks Pi's copy; env outranks the file.
+        try FileManager.default.createDirectory(at: home.appendingPathComponent(".ollama"), withIntermediateDirectories: true)
+        try Data(#"{"keys":[{"type":"oas","value":"fixture-ollama-file-key"}]}"#.utf8).write(to: home.appendingPathComponent(".ollama/api_keys.json"))
+        let directOllama = try UsageCredentials.context(.ollama, home: home, env: [:])
+        check(directOllama.request.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-ollama-file-key", "Ollama's own key file is used directly, ahead of Pi")
+        let envOllama = try UsageCredentials.context(.ollama, home: home, env: ["OLLAMA_API_KEY": "fixture-ollama-env-key"])
+        check(envOllama.request.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-ollama-env-key", "OLLAMA_API_KEY outranks ollama's key file")
         try save(["openai": ["type": "oauth", "access": "new-responses-token", "expires": expiry], "CF": ["type": "api_key", "key": "gateway-key"]], authURL)
         try save([:], modelsURL)
         let absent = try UsagePiCredentials.context(.codex, home: home, env: [:], now: now)
         check(absent == nil, "New OpenAI Responses OAuth and CF gateway keys cannot masquerade as Codex OAuth")
-        // Cursor must bypass even malformed Pi files instead of trying to convert an inference key to a cookie.
+        // GLM must bypass even malformed Pi files instead of treating an inference key as a plan key.
         try Data("broken".utf8).write(to: authURL)
-        let cursor = try UsagePiCredentials.context(.cursor, home: home, env: [:], now: now)
-        check(cursor == nil, "Cursor does not inspect Pi credentials")
+        let glmPi = try UsagePiCredentials.context(.glm, home: home, env: [:], now: now)
+        check(glmPi == nil, "GLM does not inspect Pi credentials")
         let local = try UsagePiCredentials.context(.deepseek, home: home, env: [:], now: now)
         check(local == nil, "DeepSeek does not inspect even malformed Pi credentials")
         let localResult = try await UsageTransport.fetch(.deepseek, home: home, env: [:], configuration: config)
@@ -491,7 +535,7 @@ private struct UsageMonitorChecks {
         let probe = Probe()
         let directory = root.appendingPathComponent("account-isolation")
         let store = UsageMonitorStore(directory: directory, read: { await probe.read($0) })
-        store.updateSettings { $0.monitoringEnabled = true; $0.providers = [.codex, .cursor] }
+        store.updateSettings { $0.monitoringEnabled = true; $0.providers = [.codex, .glm] }
         store.start(); await settle(store)
         check(store.readings.allSatisfy { $0.status == .ready }, "Account A has valid readings")
         await probe.configure(fails: true)
@@ -507,7 +551,7 @@ private struct UsageMonitorChecks {
         store.refresh()
         try await Task.sleep(for: .milliseconds(20))
         store.updateSettings { $0.providers.swapAt(0, 1) }
-        check(store.isRefreshing && store.readings.map(\.provider) == [.cursor, .codex], "Reorder retains in-flight work and updates display order")
+        check(store.isRefreshing && store.readings.map(\.provider) == [.glm, .codex], "Reorder retains in-flight work and updates display order")
         await settle(store)
         let afterReorder = await probe.count()
         check(afterReorder == beforeReorder + 2, "Reorder cannot create replacement requests")
@@ -538,7 +582,7 @@ private struct UsageMonitorChecks {
         store.start(); store.refreshBecauseSomeoneIsLooking(); store.tick(); store.noteCodexWorkState(isBusy: true)
         let before = await probe.count()
         check(before == 0, "Events and activity cannot bypass opt-in")
-        store.updateSettings { $0.monitoringEnabled = true; $0.providers = [.codex, .cursor] }
+        store.updateSettings { $0.monitoringEnabled = true; $0.providers = [.codex, .glm] }
         await settle(store)
         let started = await probe.count()
         clock.now += 299; store.tick(); await settle(store)
@@ -612,7 +656,7 @@ private struct UsageMonitorChecks {
             var held: CheckedContinuation<Void, Never>?
             func read(_ provider: UsageProviderID) async -> UsageFetchResult {
                 calls.append(provider)
-                if provider == .cursor { await withCheckedContinuation { held = $0 } }
+                if provider == .glm { await withCheckedContinuation { held = $0 } }
                 return UsageFetchResult(credentialID: "fixture", result: .success(UsageReading(provider: provider, status: .ready)))
             }
             func count(_ provider: UsageProviderID) -> Int { calls.filter { $0 == provider }.count }
@@ -620,19 +664,19 @@ private struct UsageMonitorChecks {
         }
         let source = PendingSource()
         let store = UsageMonitorStore(directory: root.appendingPathComponent("deadline"), read: { await source.read($0) })
-        store.updateSettings { $0.monitoringEnabled = true; $0.providers = [.codex, .cursor] }
+        store.updateSettings { $0.monitoringEnabled = true; $0.providers = [.codex, .glm] }
         store.start()
         for _ in 0..<100 where store.readings.first?.status != .ready { try await Task.sleep(for: .milliseconds(5)) }
-        check(store.readings.first?.status == .ready && store.inFlightForTesting == [.cursor], "Slow source cannot delay another provider's reading")
+        check(store.readings.first?.status == .ready && store.inFlightForTesting == [.glm], "Slow source cannot delay another provider's reading")
         store.refresh(.codex)
         for _ in 0..<100 where store.inFlightForTesting.contains(.codex) { try await Task.sleep(for: .milliseconds(5)) }
         let beforeDeadline = await source.count(.codex)
         check(beforeDeadline == 2, "Single-provider event is independent of the all-provider pass")
         store.abandonRefresh()
-        check(!store.isRefreshing && store.refreshing.isEmpty && store.inFlightForTesting == [.cursor], "Original deadline frees feedback/pass without dropping blocked work")
+        check(!store.isRefreshing && store.refreshing.isEmpty && store.inFlightForTesting == [.glm], "Original deadline frees feedback/pass without dropping blocked work")
         store.refresh()
         for _ in 0..<100 where store.inFlightForTesting.contains(.codex) { try await Task.sleep(for: .milliseconds(5)) }
-        let slowReads = await source.count(.cursor), fastReads = await source.count(.codex)
+        let slowReads = await source.count(.glm), fastReads = await source.count(.codex)
         check(slowReads == 1 && fastReads == 3, "After deadline, healthy sources refetch without stacking stuck reads")
         store.updateSettings { $0.monitoringEnabled = false }
         await source.release()
@@ -656,7 +700,7 @@ private struct UsageMonitorChecks {
     static func refreshFeedbackChecks(_ root: URL) async throws {
         let probe = Probe()
         let store = UsageMonitorStore(directory: root.appendingPathComponent("refresh-feedback"), read: { await probe.read($0) })
-        store.updateSettings { $0.monitoringEnabled = true; $0.providers = [.codex, .cursor] }
+        store.updateSettings { $0.monitoringEnabled = true; $0.providers = [.codex, .glm] }
         store.start(); await settle(store)
         check(store.refreshing.isEmpty, "Startup feedback clears on completion")
         store.refreshBecauseSomeoneIsLooking()
@@ -666,8 +710,8 @@ private struct UsageMonitorChecks {
         try await Task.sleep(for: .milliseconds(100))
         check(store.refreshing == [.codex], "Fast result keeps the original 380ms press feedback")
         store.refresh(.codex); store.refresh(.codex)
-        store.refresh(.cursor)
-        check(store.refreshing == [.codex, .cursor], "Another source can refresh independently during feedback")
+        store.refresh(.glm)
+        check(store.refreshing == [.codex, .glm], "Another source can refresh independently during feedback")
         await settle(store)
         let after = await probe.count()
         check(after == before + 2 && store.refreshing.isEmpty, "Repeated clicks deduplicate until feedback ends; all indicators eventually clear")
@@ -681,7 +725,7 @@ private struct UsageMonitorChecks {
         let blocked = await probe.count()
         check(store.refreshing.isEmpty && blocked == limited, "Backoff refuses both another request and fake refresh feedback")
         await probe.configure(delayed: true)
-        store.refresh(.cursor)
+        store.refresh(.glm)
         store.updateSettings { $0.monitoringEnabled = false }
         check(store.refreshing.isEmpty, "Disabling immediately clears feedback while cancelled work unwinds")
         await store.stop()
@@ -772,6 +816,11 @@ private struct UsageMonitorChecks {
         var expected = store.settings
         expected.surfaceStyle = .glass
         check(legacy.settings == expected && legacy.settingsError == nil, "Existing settings keep opt-in, sources and placement without the new surface key")
+        legacySettings["providers"] = ["codex", "cursor"]
+        legacyDocument["settings"] = legacySettings
+        try JSONSerialization.data(withJSONObject: legacyDocument).write(to: legacyFile)
+        let migrated = UsageMonitorStore(directory: legacyDirectory, fetch: { try await probe.fetch($0) })
+        check(migrated.settings.providers == [.codex, .glm] && migrated.settingsError == nil, "Cursor-era saved settings load as the GLM plan")
         legacySettings["surfaceStyle"] = "future-style"
         legacyDocument["settings"] = legacySettings
         let futureStyleData = try JSONSerialization.data(withJSONObject: legacyDocument)

@@ -39,6 +39,7 @@ enum UsageParsing {
         var limits: [UsageLimit] = []
         var detail: String?
         var headlineID: String?
+        var plan: String?
         func add(_ id: String, _ title: String, _ value: Double?, _ reset: Any? = nil) {
             guard let value else { return }
             limits.append(UsageLimit(id: id, title: title, usedFraction: value, resetsAt: date(reset)))
@@ -66,18 +67,54 @@ enum UsageParsing {
                 add(kind, title, percent(w["utilization"]), w["resets_at"])
             }
             limits.sort { ($0.id.hasPrefix("session") ? 0 : 1) < ($1.id.hasPrefix("session") ? 0 : 1) }
-        case .cursor:
-            let usage = root["individualUsage"] as? [String: Any] ?? [:]
-            let plan = usage["plan"] as? [String: Any] ?? [:]
-            let reset = root["billingCycleEnd"]
-            if plan["enabled"] as? Bool != false {
-                add("auto", "Auto usage", percent(plan["autoPercentUsed"]), reset)
-                add("api", "API usage", percent(plan["apiPercentUsed"]), reset)
+        case .glm:
+            // GLM rides errors in under HTTP 200 ({"code":401,"success":false}); the envelope is read first.
+            let code = number(root["code"], allowNegative: true)
+            if root["success"] as? Bool != true, let code, code != 200 {
+                if code == 401 || code == 403 { throw UsageFailure.notConnected }
+                if code == 429 { throw UsageFailure.rateLimited(now.addingTimeInterval(60)) }
+                throw UsageFailure.invalidResponse
             }
-            if limits.isEmpty { bucket(usage["overall"], "included", "Included usage", reset) }
-            bucket(usage["onDemand"], "on_demand", "On demand", reset)
-            if let team = root["teamUsage"] as? [String: Any] { bucket(team["onDemand"], "team", "Team on demand", reset) }
-            if limits.isEmpty, root["isUnlimited"] as? Bool == true { detail = "Unlimited plan; no percentage limit reported." }
+            let payload = root["data"] as? [String: Any] ?? [:]
+            plan = (payload["level"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            for entry in (payload["limits"] as? [[String: Any]] ?? []).prefix(20) {
+                // Without a percentage there is nothing to draw; a bare count would invent a scale.
+                guard let pct = number(entry["percentage"]) else { continue }
+                let type = entry["type"] as? String
+                let unit = number(entry["unit"]).flatMap(Int.init), count = number(entry["number"]).flatMap(Int.init)
+                // Identity comes from the window length, not the meter: token plans answer TOKENS_LIMIT,
+                // credit plans CREDIT_LIMIT, and both encode (hours,5)/(weeks,1) the same way.
+                let id: String
+                if type == "TIME_LIMIT" { id = "mcp" }
+                else if unit == 3, count == 5 { id = "session" }
+                else if unit == 6, count == 1 { id = "weekly" }
+                else if let unit, let count { id = "window-\(unit)x\(count)" }
+                else { id = type?.lowercased() ?? "unknown" }
+                let title: String
+                switch id {
+                case "session": title = "Current session"
+                case "weekly": title = "Weekly"
+                case "mcp": title = "MCP (1 month)"
+                default:
+                    if id.hasPrefix("window-"), let count { title = unit == 3 ? "Usage (\(count) h)" : "Usage (\(count) wk)" }
+                    else { title = "Usage" }
+                }
+                let duration: TimeInterval? = count.flatMap { n in
+                    switch unit {
+                    case 3: return Double(n) * 3600
+                    case 6: return Double(n) * 7 * 86400
+                    default: return nil
+                    }
+                }
+                limits.append(UsageLimit(id: id, title: title, usedFraction: pct / 100,
+                                         resetsAt: date(entry["nextResetTime"]), duration: duration))
+            }
+            // Session first, then weekly, then MCP — the order the plan's own panel leads with.
+            func rank(_ id: String) -> Int {
+                switch id { case "session": return 0; case "weekly": return 1; case "mcp": return 2; default: return 3 }
+            }
+            limits.sort { let (a, b) = (rank($0.id), rank($1.id)); return a == b ? $0.id < $1.id : a < b }
+            headlineID = "session"
         case .copilot:
             guard let quotas = root["quota_snapshots"] as? [String: Any] else { throw UsageFailure.invalidResponse }
             var unlimitedCount = 0
@@ -119,15 +156,24 @@ enum UsageParsing {
                 }
             }
         case .ollama:
-            guard let blocks = root["limits"] as? [String: Any] else { throw UsageFailure.invalidResponse }
-            for (key, title) in [("monthly", "Monthly usage"), ("session", "Session usage"), ("weekly", "Weekly usage")] {
-                if let b = blocks[key] as? [String: Any] { add(key, title, number(b["usage"])) }
+            if let blocks = root["limits"] as? [String: Any] {
+                // Legacy quota shape; activity.period.ending_at is the range end, NOT a quota reset.
+                for (key, title) in [("monthly", "Monthly usage"), ("session", "Session usage"), ("weekly", "Weekly usage")] {
+                    if let b = blocks[key] as? [String: Any] { add(key, title, number(b["usage"])) }
+                }
+            } else if let totals = root["totals"] as? [String: Any] {
+                // 2026-11: /api/usage answers with spend aggregates only (no quota anymore);
+                // spend shares the local-DeepSeek fixed US$100 budget convention.
+                let title = ["7d": "Last 7 days", "30d": "Last 30 days"][root["range"] as? String ?? "7d"] ?? "Recent spend"
+                add("spend", title, number(totals["usage_usd"]).map { $0 / 100 })
+            } else {
+                throw UsageFailure.invalidResponse
             }
-            // activity.period.ending_at is the end of the reporting range, NOT a quota reset.
         case .deepseek:
             throw UsageFailure.invalidResponse // Local Pi costs are never derived from a shared account balance.
         }
         guard !limits.isEmpty || detail != nil else { throw UsageFailure.invalidResponse }
-        return UsageReading(provider: provider, status: .ready, limits: limits, updatedAt: now, detail: detail, headlineID: headlineID)
+        return UsageReading(provider: provider, status: .ready, limits: limits, updatedAt: now,
+                            detail: detail, headlineID: headlineID, plan: plan)
     }
 }

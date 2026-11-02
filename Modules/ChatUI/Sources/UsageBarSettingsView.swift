@@ -23,8 +23,7 @@ public struct UsageBarSettingsView: View {
                 }
             }
             Section {
-                Toggle(L10n.tr("usage.show"), isOn: setting(\.isVisible))
-                Toggle(L10n.tr("usage.monitoring"), isOn: setting(\.monitoringEnabled))
+                Toggle(L10n.tr("usage.show"), isOn: setting(\.monitoringEnabled))
                 Text(L10n.tr("usage.privacy")).font(.caption).foregroundStyle(.secondary)
             } header: { Text(L10n.tr("usage.menu")) }
 

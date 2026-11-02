@@ -51,7 +51,7 @@ enum UsageTooltipLayout {
     }
 
     /// Original cardHeight branches for Codex: plan, windows/groups, resets, account statistics.
-    @MainActor static func height(reading: UsageReading, now: Date, statusMessage: String?) -> CGFloat {
+    @MainActor static func height(reading: UsageReading, now: Date, statusMessage: String?, extraNotes: [String] = []) -> CGFloat {
         let header = max(UsageNotchLayout.glyphSize, cardTitleLineHeight)
             + (reading.plan == nil ? 0 : cardBodyLineHeight)
         var height = 2 * cardPadding + header
@@ -74,6 +74,11 @@ enum UsageTooltipLayout {
             height += codexUsageTop + hairline + blockSpacing
                 + codexMetricTop + codexMetricHeight + codexMetricBottom + hairline
                 + 2 * cardBodyLineHeight + codexUsageRowGap + codexChartTop + codexChartHeight
+        }
+        if !extraNotes.isEmpty {
+            height += headerToBlock
+                + extraNotes.reduce(0) { $0 + bodyTextHeight($1) }
+                + CGFloat(extraNotes.count - 1) * px(6)
         }
         return height
     }

@@ -300,7 +300,7 @@ private struct UsageCodexWindowRow: View {
         return Color(nsColor: .controlAccentColor)
     }
     private var paceText: Text {
-        guard settings.showUsagePace, let pace = window.usagePace(now: now) else { return Text("") }
+        guard let pace = window.usagePace(now: now) else { return Text("") }
         let text = UsageTooltipCopy.format(pace.isDeficit ? "usage.codex.deficit" : "usage.codex.reserved", pace.value)
         return Text(" · \(text)").foregroundColor(pace.isDeficit ? .orange : secondaryInk)
     }
@@ -334,6 +334,7 @@ struct UsageCodexTooltip: View {
     @Environment(\.usageTooltipSurfaceStyle) private var surfaceStyle
     @Environment(\.usageReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.tooltipSecondaryInk) private var secondaryInk
 
     private struct WindowGroup: Identifiable {
         let id: String
@@ -342,7 +343,7 @@ struct UsageCodexTooltip: View {
     }
     private var groupedWindows: [WindowGroup] {
         var result: [WindowGroup] = []
-        for window in reading.limits {
+        for window in displayReading.limits {
             if let last = result.last, last.title == window.group {
                 result[result.count - 1].windows.append(window)
             } else {
@@ -354,9 +355,9 @@ struct UsageCodexTooltip: View {
     private var statusMessage: String? {
         switch reading.status {
         case .disabled: return L10n.tr("usage.off_hint")
-        case .notConnected: return L10n.tr("usage.codex.sign_in")
+        case .notConnected: return L10n.tr("usage.\(reading.provider.rawValue).sign_in")
         case .failed, .rateLimited: return reading.detail.map(UsagePresentation.detail) ?? UsagePresentation.status(reading.status)
-        case .ready, .stale: return reading.limits.isEmpty ? L10n.tr("usage.no_reading") : nil
+        case .ready, .stale: return displayReading.limits.isEmpty ? (reading.detail.map(UsagePresentation.detail) ?? L10n.tr("usage.no_reading")) : nil
         }
     }
     private var readingAge: String? {
@@ -368,13 +369,43 @@ struct UsageCodexTooltip: View {
     }
     private var settings: UsageCodexSettings { reading.codexSettings ?? UsageCodexSettings() }
 
+    /// DeepSeek's local ledger drawn as the same rows GLM uses: today / last 7 /
+    /// last 30 days over the fixed US$100 budget, instead of account windows.
+    private var displayReading: UsageReading {
+        guard reading.provider == .deepseek, let spend = reading.localSpend else { return reading }
+        var result = reading
+        func limit(_ id: String, _ key: String, _ amount: Decimal?) -> UsageLimit? {
+            guard let amount, !amount.isNaN, amount >= 0 else { return nil }
+            return UsageLimit(id: id, title: L10n.tr(key),
+                              usedFraction: NSDecimalNumber(decimal: amount / 100).doubleValue)
+        }
+        result.limits = [
+            limit("today", "usage.spend.row.today", spend.today.usd),
+            limit("last7", "usage.spend.row.last7", spend.last7Days.usd),
+            limit("last30", "usage.spend.row.last30", spend.last30Days.usd)
+        ].compactMap { $0 }
+        result.headlineID = "today"
+        result.plan = L10n.tr("usage.spend.estimate")
+        return result
+    }
+
+    /// The card's money line and ledger notes under DeepSeek's rows.
+    private var spendNotes: [String] {
+        guard reading.provider == .deepseek, let spend = reading.localSpend else { return [] }
+        return [String(format: L10n.tr("usage.spend.money_line"),
+                        UsagePresentation.money(spend.today.usd),
+                        UsagePresentation.money(spend.last7Days.usd),
+                        UsagePresentation.money(spend.last30Days.usd))]
+            + UsagePresentation.spendNotes(spend)
+    }
+
     var body: some View {
-        UsageTooltipShell(height: UsageTooltipLayout.height(reading: reading, now: now, statusMessage: statusMessage),
+        UsageTooltipShell(height: UsageTooltipLayout.height(reading: displayReading, now: now, statusMessage: statusMessage, extraNotes: spendNotes),
                           direction: direction, tailOffset: tailOffset) {
             VStack(alignment: .leading, spacing: 0) {
-                UsageTooltipHeader(title: L10n.tr("usage.codex.title"), subtitle: reading.plan, note: readingAge) {
-                    UsageProviderGlyph(provider: .codex)
-                        .scaleEffect(1.08 * 0.94)
+                UsageTooltipHeader(title: L10n.tr("usage.\(displayReading.provider.rawValue).title"), subtitle: displayReading.plan, note: readingAge) {
+                    UsageProviderGlyph(provider: displayReading.provider)
+                        .scaleEffect(UsageProviderGlyph.scale(for: displayReading.provider))
                         .frame(width: UsageNotchLayout.glyphSize, height: UsageNotchLayout.glyphSize)
                         .foregroundStyle(UsageTooltipPalette.textPrimary)
                 }
@@ -418,9 +449,20 @@ struct UsageCodexTooltip: View {
                     UsageResetCreditsSection(credits: credits, now: now)
                 }
                 if let usage = reading.tokenUsage { CodexUsageSection(usage: usage, now: now) }
+                if !spendNotes.isEmpty {
+                    VStack(alignment: .leading, spacing: UsageTooltipLayout.px(6)) {
+                        ForEach(spendNotes, id: \.self) { line in
+                            Text(line)
+                                .font(UsageTooltipLayout.bodyFont)
+                                .foregroundStyle(secondaryInk)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.top, UsageTooltipLayout.headerToBlock)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
-            .id(reading.id + "-" + L10n.locale)
+            .id(displayReading.id + "-" + L10n.locale)
         }
         .environment(\.tooltipSecondaryInk, UsageTooltipGlassContrast.secondaryInk(
             surfaceStyle: surfaceStyle, colorScheme: colorScheme, reduceTransparency: reduceTransparency))

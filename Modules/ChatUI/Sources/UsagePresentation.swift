@@ -34,11 +34,32 @@ enum UsagePresentation {
         L10n.tr("usage.status.\(status.rawValue)")
     }
 
+    /// DeepSeek ledger notes, shared by the popover rows and the notch card.
+    static func spendNotes(_ spend: UsageLocalSpend?) -> [String] {
+        guard let spend else { return [] }
+        var lines = [String(format: L10n.tr("usage.spend.scan"), spend.scannedFiles, spend.discoveredFiles, spend.total.records)]
+        if spend.total.records == 0 {
+            lines.append(L10n.tr(spend.discoveredFiles == 0 ? "usage.spend.no_logs" : "usage.spend.no_records"))
+        } else {
+            lines.append(String(format: L10n.tr("usage.spend.sources"), spend.total.recorded, spend.total.configured,
+                                spend.total.reference, spend.total.unpriced))
+            if spend.total.reference > 0 { lines.append(L10n.tr("usage.spend.reference")) }
+        }
+        if spend.incomplete { lines.append(L10n.tr("usage.spend.incomplete")) }
+        return lines
+    }
+
+    /// US-dollar amounts for the card's money line; unknown stays "—".
+    static func money(_ amount: Decimal?) -> String {
+        guard let amount, !amount.isNaN, amount >= 0 else { return "—" }
+        return String(format: "$%.2f", NSDecimalNumber(decimal: amount).doubleValue)
+    }
+
     static func symbol(_ provider: UsageProviderID) -> String {
         switch provider {
         case .codex: "command"
         case .claude: "sun.max"
-        case .cursor: "cursorarrow"
+        case .glm: "sparkles"
         case .copilot: "eyeglasses"
         case .ollama: "hare"
         case .deepseek: "water.waves"

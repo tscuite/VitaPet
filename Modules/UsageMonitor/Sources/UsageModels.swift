@@ -1,17 +1,28 @@
 import Foundation
 
 public enum UsageProviderID: String, Codable, CaseIterable, Identifiable, Sendable {
-    case codex, claude, cursor, copilot, ollama, deepseek
+    case codex, claude, glm, copilot, ollama, deepseek
     public var id: String { rawValue }
     public var displayName: String {
         switch self {
         case .codex: "Codex"
         case .claude: "Claude"
-        case .cursor: "Cursor"
+        case .glm: "GLM"
         case .copilot: "GitHub Copilot"
         case .ollama: "Ollama"
         case .deepseek: "DeepSeek"
         }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        // Saved settings from the Cursor era must keep loading as the GLM plan.
+        if raw == "cursor" { self = .glm; return }
+        guard let value = UsageProviderID(rawValue: raw) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                    debugDescription: "Unknown UsageProviderID \(raw)"))
+        }
+        self = value
     }
 }
 
@@ -77,9 +88,8 @@ public enum UsageBarEdge: String, Codable, CaseIterable, Sendable { case top, bo
 public enum UsageBarSurfaceStyle: String, Codable, CaseIterable, Sendable { case glass, darkGlass, solid }
 
 public struct UsageBarSettings: Codable, Equatable, Sendable {
-    public var isVisible = true
     public var monitoringEnabled = false
-    public var providers: [UsageProviderID] = [.codex, .cursor, .copilot, .ollama, .deepseek]
+    public var providers: [UsageProviderID] = [.codex, .glm, .copilot, .ollama, .deepseek]
     public var edge: UsageBarEdge = .top
     public var surfaceStyle: UsageBarSurfaceStyle = .glass
     public var scale: Double = 1
@@ -89,13 +99,12 @@ public struct UsageBarSettings: Codable, Equatable, Sendable {
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case isVisible, monitoringEnabled, providers, edge, surfaceStyle, scale, opacity, horizontalPosition, screenID
+        case monitoringEnabled, providers, edge, surfaceStyle, scale, opacity, horizontalPosition, screenID
     }
 
     public init(from decoder: Decoder) throws {
         self.init()
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        isVisible = try values.decodeIfPresent(Bool.self, forKey: .isVisible) ?? isVisible
         monitoringEnabled = try values.decodeIfPresent(Bool.self, forKey: .monitoringEnabled) ?? monitoringEnabled
         providers = try values.decodeIfPresent([UsageProviderID].self, forKey: .providers) ?? providers
         edge = try values.decodeIfPresent(UsageBarEdge.self, forKey: .edge) ?? edge

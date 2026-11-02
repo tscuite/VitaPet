@@ -114,7 +114,7 @@ public final class PetScene: SKScene, @unchecked Sendable {
         animationGeneration &+= 1
         let generation = animationGeneration
 
-        // ponytail: only attached, single-frame idle can reuse a rendered image; other animations keep SpriteKit.
+        // Only single-frame idle uses compositor breathing; SpriteKit still refreshes the drawable.
         if state == .idle, textures.count == 1, let view {
             view.wantsLayer = true
             if let layer = view.layer, CATransform3DIsIdentity(layer.transform) {
@@ -1039,7 +1039,7 @@ public final class PetScene: SKScene, @unchecked Sendable {
     }
 
     var targetRenderCadence: RenderCadence {
-        RenderCadencePlanner.cadence(for: renderWorkload, isVisible: renderingVisible)
+        RenderCadencePlanner.cadence(for: redrawWorkload, isVisible: renderingVisible)
     }
 
     private func setRenderWorkload(_ workload: RenderWorkload) {
@@ -1063,10 +1063,8 @@ public final class PetScene: SKScene, @unchecked Sendable {
             layer.removeAnimation(forKey: idleIntroKey)
             layer.removeAnimation(forKey: idleBreathingKey)
         } else if staticRedrawCoordinator.cadenceOverride == nil {
-            // Reuse the completed Metal frame; the compositor animates it at display cadence.
+            // Keep refreshing Metal at static cadence so a stale/deformed drawable cannot persist.
             if layer.animation(forKey: idleBreathingKey) == nil { addIdleBreathing(to: layer) }
-            isPaused = true
-            view.isPaused = true
         }
     }
 

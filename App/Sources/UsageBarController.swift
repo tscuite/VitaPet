@@ -15,7 +15,7 @@ final class UsageBarController: NSObject, NSWindowDelegate {
     private var mouseMonitors: [Any] = []
     private var started = false
 
-    var isVisible: Bool { store.settings.isVisible }
+    var isVisible: Bool { store.settings.monitoringEnabled }
 
     init(store: UsageMonitorStore = UsageMonitorStore()) {
         self.store = store
@@ -64,7 +64,7 @@ final class UsageBarController: NSObject, NSWindowDelegate {
 
     func toggleVisibility() {
         guard started else { return }
-        store.updateSettings { $0.isVisible.toggle() }
+        store.updateSettings { $0.monitoringEnabled.toggle() }
     }
 
     func resetPosition() {
@@ -115,7 +115,7 @@ final class UsageBarController: NSObject, NSWindowDelegate {
 
     private func updatePanel() {
         guard started else { return }
-        guard store.settings.isVisible else {
+        guard store.settings.monitoringEnabled else {
             panel?.orderOut(nil)
             return
         }

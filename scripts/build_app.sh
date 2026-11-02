@@ -134,6 +134,8 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
   <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>VitaPet opens Terminal when you choose a Shuttle shortcut.</string>
   <key>NSSupportsAutomaticTermination</key>
   <false/>
   <key>NSSupportsSuddenTermination</key>
