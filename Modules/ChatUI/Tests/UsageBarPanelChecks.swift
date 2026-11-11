@@ -657,6 +657,8 @@ struct UsageBarPanelChecks {
             shell.showSettings()
             let shellSettings = app.windows.first { $0.title == L10n.tr("usage.settings.window_title") }!
             precondition(shellSettings.isVisible, "Settings action must open the native window")
+            precondition(shellSettings.contentView is NSHostingView<UsageBarSettingsView>,
+                         "First settings open must attach the SwiftUI form, not the window's empty default content view")
             weak var closedSettingsContent = shellSettings.contentView
             shellSettings.performClose(nil)
             try! await Task.sleep(for: .milliseconds(200))

@@ -90,7 +90,8 @@ final class UsageBarController: NSObject, NSWindowDelegate {
             window.center()
             settingsWindow = window
         }
-        if settingsWindow?.contentView == nil {
+        // A new window owns an empty default content view, so nil is the wrong "not attached" test.
+        if !(settingsWindow?.contentView is NSHostingView<UsageBarSettingsView>) {
             settingsWindow?.contentView = NSHostingView(rootView: UsageBarSettingsView(
                 store: store, onResetPosition: { [weak self] in self?.resetPosition() }
             ))
