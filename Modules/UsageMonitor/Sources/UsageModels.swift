@@ -13,6 +13,12 @@ public enum UsageProviderID: String, Codable, CaseIterable, Identifiable, Sendab
         case .deepseek: "DeepSeek"
         }
     }
+    /// Anonymous Google pre-flight gate before usage GETs. GLM (z.ai / open.bigmodel.cn) and
+    /// GitHub Copilot endpoints are reachable without a proxy, so their usage is queried directly
+    /// instead of being skipped whenever www.google.com cannot be reached.
+    public var requiresGoogleGate: Bool {
+        switch self { case .codex, .claude, .ollama: true; case .glm, .copilot, .deepseek: false }
+    }
 
     public init(from decoder: Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)

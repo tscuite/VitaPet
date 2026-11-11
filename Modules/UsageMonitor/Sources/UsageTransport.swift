@@ -76,7 +76,7 @@ enum UsageTransport {
         configuration.urlCache = nil
         let session = URLSession(configuration: configuration, delegate: UsageRedirectPolicy(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
-        let usageData = try await data(request, session: session)
+        let usageData = try await data(request, provider: provider, session: session)
         guard provider == .codex else { return try UsageParsing.parse(usageData, provider: provider) }
 
         // Same bearer and account for all three original GETs. Never re-read credentials mid-poll.
@@ -86,9 +86,9 @@ enum UsageTransport {
         resets.url = URL(string: "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits")!
         resets.setValue("codex-1", forHTTPHeaderField: "OpenAI-Beta")
         // As upstream, start unused resets before decoding extras; then request profile statistics.
-        async let resetData = data(resets, session: session)
+        async let resetData = data(resets, provider: .codex, session: session)
         var reading = try UsageParsing.parse(usageData, provider: provider, codexSettings: codexSettings)
-        do { reading.tokenUsage = try CodexUsage.profileUsage(from: await data(profile, session: session)) }
+        do { reading.tokenUsage = try CodexUsage.profileUsage(from: await data(profile, provider: .codex, session: session)) }
         catch UsageFailure.googleUnavailable { reading.detail = UsageFailure.googleUnavailable.errorDescription }
         catch {} // Optional endpoint failure must not discard valid quota.
         do { reading.resetCredits = try CodexUsage.resetCredits(from: await resetData) }
@@ -99,7 +99,8 @@ enum UsageTransport {
         return reading
     }
 
-    /// Each provider GET gets a fresh anonymous Google check, including optional Codex statistics.
+    /// Every gate-provider GET gets a fresh anonymous Google check, including optional Codex statistics.
+    /// GLM and Copilot query their directly reachable endpoints without the pre-flight probe.
     /// DeepSeek never enters this HTTP path. Neither credentials nor a cached success can bypass it.
     private static func checkGoogle(configuration: URLSessionConfiguration) async throws {
         let config = URLSessionConfiguration.ephemeral
@@ -123,11 +124,13 @@ enum UsageTransport {
         }
     }
 
-    // Also used by the explicitly opted-in same-response comparison; it cannot bypass the Google gate.
-    static func data(_ request: URLRequest, session: URLSession) async throws -> Data {
+    // Also used by the explicitly opted-in same-response comparison; gate providers cannot bypass the Google check.
+    static func data(_ request: URLRequest, provider: UsageProviderID, session: URLSession) async throws -> Data {
         do {
             try Task.checkCancellation()
-            try await checkGoogle(configuration: session.configuration)
+            if provider.requiresGoogleGate {
+                try await checkGoogle(configuration: session.configuration)
+            }
             try Task.checkCancellation()
             let (bytes, response) = try await session.bytes(for: request)
             guard let http = response as? HTTPURLResponse else { throw UsageFailure.invalidResponse }

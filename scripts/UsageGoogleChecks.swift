@@ -46,7 +46,18 @@ private final class GoogleFixture: URLProtocol, @unchecked Sendable {
             client?.urlProtocolDidFinishLoading(self)
             return
         }
-        precondition(request.url?.host == "chatgpt.com", "No other endpoint, including a redirect destination, may be contacted")
+        precondition(request.url?.host == "chatgpt.com" || request.url?.host == "api.z.ai" || request.url?.host == "api.github.com",
+                     "No other endpoint, including a redirect destination, may be contacted")
+        if request.url?.host != "chatgpt.com" {
+            // Direct-endpoint providers: minimal valid usage payloads answered inline.
+            let body = request.url!.host == "api.z.ai"
+                ? Data(#"{"success":true,"data":{"level":"Max","limits":[{"percentage":42,"type":"USAGE_LIMIT","unit":3,"number":5}]}}"#.utf8)
+                : Data(#"{"quota_snapshots":{"chat":{"entitlement":100,"used":30,"reset_date":"2026-01-01"}}}"#.utf8)
+            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: body)
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
         let path = request.url!.path
         let name = path.hasSuffix("/usage") ? "usage" : path.hasSuffix("profiles/me") ? "profile" : "resets"
         let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../Modules/UsageMonitor/Tests/Fixtures")
@@ -73,7 +84,7 @@ func googleGateChecks(_ root: URL) async throws {
     }
     for mode: GoogleFixture.Mode in [.status(200), .status(302), .status(429), .status(503), .wrongOrigin,
                                     .failure(.cannotFindHost), .failure(.timedOut), .failure(.serverCertificateUntrusted), .failure(.notConnectedToInternet)] {
-        for provider in UsageProviderID.allCases where provider != .deepseek {
+        for provider in UsageProviderID.allCases where provider.requiresGoogleGate {
             GoogleFixture.reset(mode)
             do {
                 _ = try await UsageTransport.fetch(quotaRequest(), provider: provider, configuration: configuration())
@@ -82,6 +93,16 @@ func googleGateChecks(_ root: URL) async throws {
             let requests = GoogleFixture.requests()
             precondition(requests.count == 1 && requests[0].url?.host == "www.google.com", "Fail closed: only the anonymous check ran")
         }
+    }
+    GoogleFixture.reset(.failure(.notConnectedToInternet))
+    for (provider, host) in [(UsageProviderID.glm, "api.z.ai"), (.copilot, "api.github.com")] {
+        let request = UsageCredentials.get("https://\(host)/fixture-usage", headers: ["Authorization": "Bearer fixture-direct"])
+        let reading = try await UsageTransport.fetch(request, provider: provider, configuration: configuration())
+        precondition(!reading.limits.isEmpty && reading.status == .ready,
+                     "GLM and Copilot usage is fetched directly even while Google is unreachable")
+        precondition(GoogleFixture.requests().filter { $0.url?.host == "www.google.com" }.isEmpty,
+                     "Directly reachable endpoints never probe Google first")
+        GoogleFixture.reset(.failure(.notConnectedToInternet))
     }
     GoogleFixture.reset(.ready)
     for _ in 0..<2 {
@@ -134,5 +155,5 @@ func googleGateChecks(_ root: URL) async throws {
     GoogleFixture.reset(.status(503))
     store.refresh(.codex)
     precondition(GoogleFixture.requests().isEmpty, "Stopped monitoring sends no Google or account requests")
-    print("PASS: fresh anonymous Google gate for every network GET, HTTP/DNS/TLS/timeout/cancellation failures, recovery, visible cached state and complete DeepSeek exemption.")
+    print("PASS: fresh anonymous Google gate for every gate-provider network GET, HTTP/DNS/TLS/timeout/cancellation failures, recovery, visible cached state, complete DeepSeek exemption and direct GLM/Copilot queries.")
 }

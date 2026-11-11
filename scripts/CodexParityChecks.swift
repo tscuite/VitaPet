@@ -165,11 +165,11 @@ struct CodexParityChecks {
         config.timeoutIntervalForRequest = 15; config.timeoutIntervalForResource = 20
         let session = URLSession(configuration: config, delegate: UsageRedirectPolicy(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
-        let usage = try await UsageTransport.data(context.request, session: session)
+        let usage = try await UsageTransport.data(context.request, provider: .codex, session: session)
         var resetRequest = context.request
         resetRequest.url = URL(string: "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits")!
         resetRequest.setValue("codex-1", forHTTPHeaderField: "OpenAI-Beta")
-        async let resetData = try? UsageTransport.data(resetRequest, session: session)
+        async let resetData = try? UsageTransport.data(resetRequest, provider: .codex, session: session)
         let now = Date()
         let a = try CodeNotchReference.CodexUsage.windows(from: usage, now: now, includeExtras: settings.showExtraLimits)
         let b = try UsageParsing.parse(usage, provider: .codex, now: now, codexSettings: settings)
@@ -181,7 +181,7 @@ struct CodexParityChecks {
         precondition(b.plan == CodeNotchReference.CodexUsage.plan(from: usage), "Live plan")
         var profileRequest = context.request
         profileRequest.url = URL(string: "https://chatgpt.com/backend-api/wham/profiles/me")!
-        let profile = try? await UsageTransport.data(profileRequest, session: session)
+        let profile = try? await UsageTransport.data(profileRequest, provider: .codex, session: session)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         var profileCompared = false, resetsCompared = false
         if let profile {
